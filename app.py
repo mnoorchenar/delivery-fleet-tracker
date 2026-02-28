@@ -1,12 +1,20 @@
-﻿from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3, os, math, time
 from datetime import datetime, timedelta
 from functools import wraps
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "delivery-tracker-secret-2024")
+# ProxyFix is required for HuggingFace Spaces (runs behind a reverse proxy)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-DB = "delivery.db"
+app.secret_key = os.environ.get("SECRET_KEY", "delivery-tracker-secret-2024")
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+
+# DB lives next to app.py regardless of working directory
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB = os.path.join(BASE_DIR, "delivery.db")
 
 # ── Store HQ coordinates (Toronto) ────────────────────────────────────────────
 STORE_LAT = 43.6532
@@ -96,17 +104,23 @@ def init_db():
         );
         """)
 
-        # Seed default users
-        try:
-            db.execute("INSERT INTO users (username,password,role) VALUES ('manager','manager','manager')")
-            db.execute("INSERT INTO users (username,password,role) VALUES ('driver','driver','driver')")
-            mgr_user = db.execute("SELECT id FROM users WHERE username='manager'").fetchone()
-            drv_user = db.execute("SELECT id FROM users WHERE username='driver'").fetchone()
-            db.execute("INSERT OR IGNORE INTO drivers (user_id,name,phone,vehicle) VALUES (?,?,?,?)",
+        # Always ensure default users exist (INSERT OR IGNORE is safe on re-runs)
+        db.execute("INSERT OR IGNORE INTO users (username,password,role) VALUES ('manager','manager','manager')")
+        db.execute("INSERT OR IGNORE INTO users (username,password,role) VALUES ('driver','driver','driver')")
+        db.commit()
+
+        # Ensure default driver profile exists
+        drv_user = db.execute("SELECT id FROM users WHERE username='driver'").fetchone()
+        if drv_user:
+            db.execute("""INSERT OR IGNORE INTO drivers (user_id,name,phone,vehicle)
+                          VALUES (?,?,?,?)""",
                        (drv_user["id"], "Alex Driver", "+1-416-555-0101", "Cargo Van"))
             db.commit()
-        except Exception:
-            db.rollback()
+
+        # Sanity check
+        count = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if count == 0:
+            raise RuntimeError("FATAL: init_db failed to create default users")
 
 init_db()
 
