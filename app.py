@@ -7,8 +7,12 @@ from functools import wraps
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = "delivery-os-fixed-secret-key-2024"
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = False  # False = works on HF Spaces (proxy handles TLS)
+
+# HuggingFace Spaces sets SPACE_ID; use it to detect HTTPS production environment.
+# SameSite=None+Secure is required so session cookies survive the HF iframe context.
+_on_hf = bool(os.environ.get("SPACE_ID"))
+app.config["SESSION_COOKIE_SAMESITE"] = "None" if _on_hf else "Lax"
+app.config["SESSION_COOKIE_SECURE"]   = _on_hf   # True on HF (HTTPS), False locally
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "data", "delivery.db"))
