@@ -5,12 +5,10 @@ from datetime import datetime, timedelta
 from functools import wraps
 
 app = Flask(__name__)
-# ProxyFix is required for HuggingFace Spaces (runs behind a reverse proxy)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+# ProxyFix for HuggingFace Spaces - x_prefix intentionally NOT set (it rewrites URLs and breaks sessions)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-app.secret_key = os.environ.get("SECRET_KEY", "delivery-tracker-secret-2024")
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.secret_key = "delivery-os-fixed-secret-key-2024"
 
 # DB lives next to app.py regardless of working directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
