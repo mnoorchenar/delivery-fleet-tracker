@@ -15,8 +15,17 @@ app.config["SESSION_COOKIE_SAMESITE"] = "None" if _on_hf else "Lax"
 app.config["SESSION_COOKIE_SECURE"]   = _on_hf   # True on HF (HTTPS), False locally
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "data", "delivery.db"))
-os.makedirs(os.path.dirname(DB), exist_ok=True)
+_default_db = os.path.join(BASE_DIR, "data", "delivery.db")
+DB = os.environ.get("DB_PATH", _default_db)
+try:
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
+    # Quick write-permission check
+    _test = os.path.join(os.path.dirname(DB), ".write_test")
+    open(_test, "w").close()
+    os.remove(_test)
+except OSError:
+    # Fall back to /tmp if the configured directory is not writable
+    DB = "/tmp/delivery.db"
 
 STORE_LAT, STORE_LNG, STORE_NAME = 43.6532, -79.3832, "Main Warehouse"
 DRIVER_SPEED_KMH = 35
@@ -117,7 +126,10 @@ def login():
         with get_db() as db:
             user = db.execute("SELECT * FROM users WHERE username=? AND password=?", (u,p)).fetchone()
         if user:
-            session.update({"user_id": user["id"], "username": user["username"], "role": user["role"]})
+            session.permanent = True
+            session["user_id"]  = user["id"]
+            session["username"] = user["username"]
+            session["role"]     = user["role"]
             return redirect(url_for("manager_dashboard" if user["role"]=="manager" else "driver_dashboard"))
         error = "Invalid credentials."
     return render_template("login.html", error=error)
