@@ -9,10 +9,12 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 app.secret_key = "delivery-os-fixed-secret-key-2024"
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = False   # set True only when served over HTTPS exclusively
 
-# DB lives next to app.py regardless of working directory
+# DB location: respect DB_PATH env var (set in Dockerfile), fall back to next to app.py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(BASE_DIR, "delivery.db")
+DB = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "delivery.db"))
 
 # ── Store HQ coordinates (Toronto) ────────────────────────────────────────────
 STORE_LAT = 43.6532
