@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeliveryOS — Driver Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0c0f;
+    --surface: #111418;
+    --surface2: #161b22;
+    --border: #1e2429;
+    --accent: #f59e0b;
+    --accent2: #3b82f6;
+    --green: #22c55e;
+    --orange: #f97316;
+    --text: #e8eaed;
+    --muted: #6b7280;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .topnav {
+    height: 54px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+
+  .topnav .logo {
+    font-family: 'Space Mono', monospace;
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .topnav .logo span { color: var(--accent); }
+
+  .topnav .badge {
+    background: rgba(59,130,246,0.15);
+    color: var(--accent2);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-family: 'Space Mono', monospace;
+  }
+
+  .topnav .spacer { flex: 1; }
+  .topnav .driver-name { font-size: 13px; color: var(--muted); }
+  .topnav .clock {
+    font-family: 'Space Mono', monospace;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .topnav a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    transition: all 0.2s;
+  }
+  .topnav a:hover { color: var(--text); border-color: var(--accent); }
+
+  .main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* INFO PANEL */
+  .info-panel {
+    width: 320px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 20px;
+    gap: 16px;
+  }
+
+  .status-hero {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .status-hero::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    transition: background 0.5s;
+  }
+
+  .status-hero.en_route::before { background: linear-gradient(90deg, transparent, var(--accent2), transparent); }
+  .status-hero.at_destination::before { background: linear-gradient(90deg, transparent, var(--green), transparent); }
+  .status-hero.returning::before { background: linear-gradient(90deg, transparent, var(--orange), transparent); }
+  .status-hero.idle::before { background: linear-gradient(90deg, transparent, var(--muted), transparent); }
+
+  .status-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    display: block;
+  }
+
+  .status-label {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    min-height: 22px;
+  }
+
+  .pkg-info {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+  }
+
+  /* Progress bar */
+  .progress-wrap {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+
+  .progress-label {
+    font-size: 11px;
+    font-family: 'Space Mono', monospace;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .progress-bar {
+    background: var(--border);
+    border-radius: 999px;
+    height: 8px;
+    overflow: hidden;
+    margin-bottom: 12px;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    border-radius: 999px;
+    transition: width 1s ease;
+  }
+
+  .trip-stops {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .stop {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+  }
+
+  .stop-icon {
+    font-size: 18px;
+  }
+
+  .stop-name {
+    font-size: 10px;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.3;
+  }
+
+  .stop-arrow {
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  /* ETA cards */
+  .eta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .eta-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    text-align: center;
+  }
+
+  .eta-card .val {
+    font-family: 'Space Mono', monospace;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 4px;
+    min-height: 28px;
+  }
+
+  .eta-card .lbl {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Package detail */
+  .pkg-detail {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+
+  .pkg-detail h4 {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .pkg-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .pkg-row:last-child { border-bottom: none; }
+  .pkg-row .pk { color: var(--muted); }
+  .pkg-row .pv { font-weight: 500; text-align: right; }
+
+  .idle-msg {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .idle-msg .big { font-size: 48px; margin-bottom: 12px; }
+
+  /* MAP */
+  .map-area { flex: 1; }
+  #map { width: 100%; height: 100%; }
+
+  /* Live indicator */
+  .live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(34,197,94,0.1);
+    border: 1px solid rgba(34,197,94,0.2);
+    color: var(--green);
+    font-size: 11px;
+    font-family: 'Space Mono', monospace;
+    padding: 3px 10px;
+    border-radius: 20px;
+  }
+
+  .live-dot {
+    width: 6px; height: 6px;
+    background: var(--green);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .leaflet-tile { filter: brightness(0.85) saturate(0.7); }
+  .leaflet-control-zoom a {
+    background: var(--surface) !important;
+    color: var(--text) !important;
+    border-color: var(--border) !important;
+  }
+</style>
+</head>
+<body>
+
+<div class="topnav">
+  <div class="logo">Delivery<span>OS</span></div>
+  <div class="badge">DRIVER</div>
+  <div class="spacer"></div>
+  <div class="live-badge"><div class="live-dot"></div> LIVE</div>
+  <div class="clock" id="clock"></div>
+  <div class="driver-name">👤 {{ driver.name }}</div>
+  <a href="/logout">Logout</a>
+</div>
+
+<div class="main">
+
+  <!-- INFO PANEL -->
+  <div class="info-panel">
+
+    <!-- Status Hero -->
+    <div class="status-hero idle" id="statusHero">
+      <span class="status-icon" id="statusIcon">🕐</span>
+      <div class="status-label" id="statusLabel">Waiting for assignment...</div>
+      <div class="pkg-info" id="pkgInfo">–</div>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-label">
+        <span>TRIP PROGRESS</span>
+        <span id="progressPct">0%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
+      </div>
+      <div class="trip-stops">
+        <div class="stop">
+          <div class="stop-icon">🏭</div>
+          <div class="stop-name">{{ store.name }}</div>
+        </div>
+        <div class="stop-arrow">→</div>
+        <div class="stop">
+          <div class="stop-icon">📦</div>
+          <div class="stop-name" id="destNameProgress">—</div>
+        </div>
+        <div class="stop-arrow">→</div>
+        <div class="stop">
+          <div class="stop-icon">🏭</div>
+          <div class="stop-name">Warehouse</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ETA Grid -->
+    <div class="eta-grid">
+      <div class="eta-card">
+        <div class="val" id="etaDest">—</div>
+        <div class="lbl">ETA to Dest.</div>
+      </div>
+      <div class="eta-card">
+        <div class="val" id="etaStore">—</div>
+        <div class="lbl">ETA to Store</div>
+      </div>
+    </div>
+
+    <!-- Package Detail -->
+    <div class="pkg-detail" id="pkgDetail" style="display:none;">
+      <h4>Active Delivery</h4>
+      <div class="pkg-row"><span class="pk">Package ID</span><span class="pv" id="pkgId">—</span></div>
+      <div class="pkg-row"><span class="pk">Destination</span><span class="pv" id="pkgDest">—</span></div>
+      <div class="pkg-row"><span class="pk">Distance</span><span class="pv" id="pkgDist">—</span></div>
+      <div class="pkg-row"><span class="pk">Vehicle</span><span class="pv">{{ driver.vehicle }}</span></div>
+    </div>
+
+    <!-- Idle message -->
+    <div class="idle-msg" id="idleMsg">
+      <div class="big">⏳</div>
+      <div>No delivery assigned yet.<br>Please wait for the manager.</div>
+    </div>
+
+  </div>
+
+  <!-- MAP -->
+  <div class="map-area">
+    <div id="map"></div>
+  </div>
+
+</div>
+
+<script>
+const STORE = { lat: {{ store.lat }}, lng: {{ store.lng }}, name: "{{ store.name }}" };
+let map, driverMarker, destMarker, storeMarker, routeLine, driverLine;
+let lastStatus = null;
+
+function initMap() {
+  map = L.map('map', { center: [STORE.lat, STORE.lng], zoom: 11 });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  // Store marker
+  const storeIcon = L.divIcon({
+    className: '',
+    html: `<div style="width:40px;height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;border:3px solid #fff;box-shadow:0 4px 15px rgba(245,158,11,0.5);">🏭</div>`,
+    iconSize: [40,40], iconAnchor:[20,20]
+  });
+  storeMarker = L.marker([STORE.lat, STORE.lng], {icon: storeIcon}).addTo(map)
+    .bindPopup(`<b>${STORE.name}</b>`);
+
+  // Driver marker
+  const driverIcon = L.divIcon({
+    className: '',
+    html: `<div id="drvIcon" style="width:40px;height:40px;background:#3b82f6;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;border:3px solid #fff;box-shadow:0 0 15px #3b82f688;">🚚</div>`,
+    iconSize:[40,40], iconAnchor:[20,20]
+  });
+  driverMarker = L.marker([STORE.lat, STORE.lng], {icon: driverIcon}).addTo(map)
+    .bindPopup('<b>You are here</b>');
+}
+
+const statusIcons = {
+  en_route: '🚚',
+  at_destination: '📦',
+  returning: '↩️',
+  idle: '⏳',
+  completed: '✅'
+};
+
+const statusColors = {
+  en_route: '#3b82f6',
+  at_destination: '#22c55e',
+  returning: '#f97316',
+  idle: '#6b7280',
+  completed: '#6b7280'
+};
+
+async function updateStatus() {
+  try {
+    const res = await fetch('/api/my_status');
+    const data = await res.json();
+
+    const status = data.status;
+    const hasDelivery = data.delivery !== null;
+
+    // Hero
+    const hero = document.getElementById('statusHero');
+    hero.className = `status-hero ${status}`;
+    document.getElementById('statusIcon').textContent = statusIcons[status] || '⏳';
+    document.getElementById('statusLabel').textContent = data.status_label || '—';
+    document.getElementById('pkgInfo').textContent = hasDelivery ? `PKG: ${data.delivery.package_id}` : '—';
+
+    // Progress
+    const pct = data.progress_pct || 0;
+    document.getElementById('progressPct').textContent = `${pct}%`;
+    document.getElementById('progressFill').style.width = `${pct}%`;
+    document.getElementById('destNameProgress').textContent =
+      hasDelivery ? data.delivery.dest_name : '—';
+
+    // ETAs
+    document.getElementById('etaDest').textContent = data.eta_to_dest || '—';
+    document.getElementById('etaStore').textContent = data.eta_to_store || '—';
+
+    // Package detail & idle toggle
+    const pkgDetail = document.getElementById('pkgDetail');
+    const idleMsg = document.getElementById('idleMsg');
+
+    if (hasDelivery) {
+      pkgDetail.style.display = 'block';
+      idleMsg.style.display = 'none';
+      document.getElementById('pkgId').textContent = data.delivery.package_id;
+      document.getElementById('pkgDest').textContent = data.delivery.dest_name;
+      document.getElementById('pkgDist').textContent = `${data.delivery.dist_km} km`;
+    } else {
+      pkgDetail.style.display = 'none';
+      idleMsg.style.display = 'block';
+    }
+
+    // Map
+    driverMarker.setLatLng([data.lat, data.lng]);
+
+    if (hasDelivery) {
+      const dlat = data.delivery.dest_lat;
+      const dlng = data.delivery.dest_lng;
+
+      if (!destMarker) {
+        const destIcon = L.divIcon({
+          className: '',
+          html: `<div style="width:36px;height:36px;background:#ef4444;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 0 12px #ef444488;">📦</div>`,
+          iconSize:[36,36], iconAnchor:[18,18]
+        });
+        destMarker = L.marker([dlat, dlng], {icon: destIcon}).addTo(map)
+          .bindPopup(`<b>📦 ${data.delivery.package_id}</b><br>${data.delivery.dest_name}`);
+
+        routeLine = L.polyline([[STORE.lat, STORE.lng], [dlat, dlng], [STORE.lat, STORE.lng]], {
+          color: '#f59e0b', weight: 1.5, dashArray: '6,8', opacity: 0.4
+        }).addTo(map);
+
+        driverLine = L.polyline([[data.lat, data.lng], [dlat, dlng]], {
+          color: '#3b82f6', weight: 2.5, opacity: 0.9
+        }).addTo(map);
+
+        // Fit bounds
+        map.fitBounds([
+          [STORE.lat, STORE.lng],
+          [dlat, dlng],
+          [data.lat, data.lng]
+        ], {padding: [40, 40]});
+      } else {
+        destMarker.setLatLng([dlat, dlng]);
+        if (status === 'en_route') {
+          driverLine.setLatLngs([[data.lat, data.lng], [dlat, dlng]]);
+        } else if (status === 'returning') {
+          driverLine.setLatLngs([[data.lat, data.lng], [STORE.lat, STORE.lng]]);
+        } else {
+          driverLine.setLatLngs([]);
+        }
+      }
+    } else {
+      // Clean up
+      if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      if (driverLine) { map.removeLayer(driverLine); driverLine = null; }
+    }
+
+    lastStatus = status;
+  } catch (e) {
+    console.error('Status update error:', e);
+  }
+}
+
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+}
+
+initMap();
+updateStatus();
+setInterval(updateStatus, 10000); // every 10 seconds
+setInterval(updateClock, 1000);
+updateClock();
+</script>
+</body>
+</html>
