@@ -6,8 +6,6 @@
 <title>DeliveryOS — Manager Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
   :root {
     --bg: #0a0c0f;
@@ -425,13 +423,22 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
-  /* Leaflet dark tiles override */
-  .leaflet-tile { filter: brightness(0.85) saturate(0.7); }
-  .leaflet-control-zoom a {
-    background: var(--surface) !important;
-    color: var(--text) !important;
-    border-color: var(--border) !important;
+  /* Destination preview */
+  .dest-preview {
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.25);
+    border-radius: 7px;
+    padding: 7px 10px;
+    font-size: 12px;
+    color: var(--accent);
+    display: none;
+    word-break: break-all;
   }
+
+  /* Google Maps controls dark */
+  .gm-style .gm-style-iw-c { background: var(--surface) !important; color: var(--text) !important; }
+  .gm-style .gm-style-iw-d { overflow: hidden !important; }
+  .gmnoprint .gm-style-cc { display: none; }
 </style>
 </head>
 <body>
@@ -497,29 +504,8 @@
         </div>
         <div class="form-group">
           <label>Destination</label>
-          <select id="sel-dest" onchange="onDestSelect()">
-            <option value="">Select destination...</option>
-            {% for dest in destinations %}
-            <option value="{{ dest.lat }},{{ dest.lng }},{{ dest.name }}">{{ dest.name }}</option>
-            {% endfor %}
-            <option value="custom">Custom coordinates...</option>
-          </select>
-        </div>
-        <div id="custom-dest-fields" style="display:none;">
-          <div class="form-group">
-            <label>Dest Name</label>
-            <input type="text" id="custom-name" placeholder="e.g. Customer Home">
-          </div>
-          <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-            <div>
-              <label>Lat</label>
-              <input type="text" id="custom-lat" placeholder="43.xxx">
-            </div>
-            <div>
-              <label>Lng</label>
-              <input type="text" id="custom-lng" placeholder="-79.xxx">
-            </div>
-          </div>
+          <input type="text" id="dest-autocomplete" placeholder="Search address or place..." autocomplete="off">
+          <div class="dest-preview" id="dest-preview">📍 <span id="dest-preview-text"></span></div>
         </div>
         <div class="form-group">
           <label>Package ID</label>
@@ -580,51 +566,86 @@
 
 <script>
 const STORE = { lat: {{ store.lat }}, lng: {{ store.lng }}, name: "{{ store.name }}" };
-let map, markers = {}, storeMarker, destMarkers = {};
+let map, storeMarker;
+let markers = {};      // driverId → { m: Marker, iw: InfoWindow }
+let destMarkers = {};  // driverId → { dm: Marker, dr: DirectionsRenderer }
 let selectedDriverId = null;
+let selectedDest = null; // { lat, lng, name }
+
+const DARK_STYLES = [
+  {elementType:"geometry",stylers:[{color:"#0a0c0f"}]},
+  {elementType:"labels.text.fill",stylers:[{color:"#6b7280"}]},
+  {elementType:"labels.text.stroke",stylers:[{color:"#111418"}]},
+  {featureType:"administrative.country",elementType:"labels.text.fill",stylers:[{color:"#9ca3af"}]},
+  {featureType:"poi",elementType:"labels.text.fill",stylers:[{color:"#6b7280"}]},
+  {featureType:"poi.park",elementType:"geometry",stylers:[{color:"#111418"}]},
+  {featureType:"road",elementType:"geometry.fill",stylers:[{color:"#1e2429"}]},
+  {featureType:"road",elementType:"labels.text.fill",stylers:[{color:"#6b7280"}]},
+  {featureType:"road.highway",elementType:"geometry",stylers:[{color:"#252d38"}]},
+  {featureType:"water",elementType:"geometry",stylers:[{color:"#060810"}]},
+  {featureType:"water",elementType:"labels.text.fill",stylers:[{color:"#374151"}]}
+];
+
+function svgUrl(svg) {
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
+function driverIcon(status, name) {
+  const cols = {en_route:'#3b82f6',at_destination:'#22c55e',returning:'#f97316',idle:'#6b7280',completed:'#6b7280'};
+  const col = cols[status] || '#6b7280';
+  const ini = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+  return {
+    url: svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" fill="${col}" stroke="white" stroke-width="2.5"/><text x="18" y="23" text-anchor="middle" fill="white" font-family="Arial,sans-serif" font-size="12" font-weight="bold">${ini}</text></svg>`),
+    scaledSize: new google.maps.Size(36,36),
+    anchor: new google.maps.Point(18,18)
+  };
+}
 
 // ── Init Map ─────────────────────────────────────────────────────────────────
 function initMap() {
-  map = L.map('map', {
-    center: [STORE.lat, STORE.lng],
+  map = new google.maps.Map(document.getElementById('map'), {
+    center: {lat: STORE.lat, lng: STORE.lng},
     zoom: 11,
-    zoomControl: true
+    styles: DARK_STYLES,
+    mapTypeControl: false,
+    streetViewControl: false
   });
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
+  storeMarker = new google.maps.Marker({
+    position: {lat: STORE.lat, lng: STORE.lng},
+    map,
+    icon: {
+      url: svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="#f59e0b" stroke="white" stroke-width="3"/><text x="20" y="28" text-anchor="middle" font-size="22" font-family="Arial">&#x1F3ED;</text></svg>`),
+      scaledSize: new google.maps.Size(40,40),
+      anchor: new google.maps.Point(20,20)
+    },
+    title: STORE.name, zIndex: 5
+  });
+  const storeInfo = new google.maps.InfoWindow({content:`<b>${STORE.name}</b><br>Main Warehouse`});
+  storeMarker.addListener('click', () => storeInfo.open(map, storeMarker));
 
-  // Store marker
-  const storeIcon = L.divIcon({
-    className: '',
-    html: `<div style="width:40px;height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;border:3px solid #fff;box-shadow:0 4px 15px rgba(245,158,11,0.5);">🏭</div>`,
-    iconSize: [40, 40],
-    iconAnchor: [20, 20]
+  // ── Places Autocomplete ──────────────────────────────────────────────────
+  const input = document.getElementById('dest-autocomplete');
+  const autocomplete = new google.maps.places.Autocomplete(input, {
+    types: ['geocode','establishment'],
+    fields: ['geometry','name','formatted_address']
+  });
+  autocomplete.addListener('place_changed', () => {
+    const place = autocomplete.getPlace();
+    if (!place.geometry) { showToast('⚠ Select a place from the suggestion list'); return; }
+    selectedDest = {
+      lat: place.geometry.location.lat(),
+      lng: place.geometry.location.lng(),
+      name: place.name || place.formatted_address
+    };
+    const preview = document.getElementById('dest-preview');
+    preview.style.display = 'block';
+    document.getElementById('dest-preview-text').textContent =
+      selectedDest.name + '  (' + selectedDest.lat.toFixed(5) + ', ' + selectedDest.lng.toFixed(5) + ')';
+    map.panTo(place.geometry.location);
+    map.setZoom(13);
   });
 
-  storeMarker = L.marker([STORE.lat, STORE.lng], {icon: storeIcon})
-    .addTo(map)
-    .bindPopup(`<b>${STORE.name}</b><br>Main Warehouse`);
-}
-
-// ── Driver icon factory ───────────────────────────────────────────────────────
-function driverIcon(status, name) {
-  const colors = {
-    en_route: '#3b82f6',
-    at_destination: '#22c55e',
-    returning: '#f97316',
-    idle: '#6b7280',
-    completed: '#6b7280'
-  };
-  const col = colors[status] || '#6b7280';
-  const initials = name.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
-  return L.divIcon({
-    className: '',
-    html: `<div style="width:36px;height:36px;background:${col};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;border:2px solid #fff;box-shadow:0 0 12px ${col}88;font-family:monospace;">${initials}</div>`,
-    iconSize: [36, 36],
-    iconAnchor: [18, 18]
-  });
 }
 
 // ── Fetch & update ────────────────────────────────────────────────────────────
@@ -636,19 +657,15 @@ async function updateDrivers() {
     const data = await res.json();
     const drivers = data.drivers;
 
-    // Stats
     const active = drivers.filter(d => d.delivery && d.delivery.status !== 'completed').length;
     document.getElementById('stat-total').textContent = drivers.length;
     document.getElementById('stat-active').textContent = active;
 
     let newCompleted = 0;
-    drivers.forEach(d => {
-      if (d.delivery && d.delivery.status === 'completed') newCompleted++;
-    });
+    drivers.forEach(d => { if (d.delivery && d.delivery.status === 'completed') newCompleted++; });
     totalCompleted = Math.max(totalCompleted, newCompleted);
     document.getElementById('stat-done').textContent = totalCompleted;
 
-    // Update driver cards
     const cardsEl = document.getElementById('driverCards');
     cardsEl.innerHTML = '';
 
@@ -668,124 +685,100 @@ async function updateDrivers() {
       card.onclick = () => focusDriver(d.id, d.lat, d.lng);
       cardsEl.appendChild(card);
 
-      // Update map marker
+      // Map marker
+      const popContent = `<div style="font-family:monospace;font-size:12px;color:#111;">
+        <b>🚚 ${d.name}</b><br>${d.status_label}
+        ${d.delivery ? `<br>📦 ${d.delivery.package_id}<br>📍 ${d.delivery.dest_name}<br>⏱ ETA: ${d.eta_str}` : '<br>No active delivery'}
+      </div>`;
+
       if (!markers[d.id]) {
-        markers[d.id] = L.marker([d.lat, d.lng], {icon: driverIcon(status, d.name)}).addTo(map);
-        markers[d.id].bindPopup('');
+        const m = new google.maps.Marker({
+          position: {lat:d.lat, lng:d.lng}, map,
+          icon: driverIcon(status, d.name), title: d.name, zIndex: 10
+        });
+        const iw = new google.maps.InfoWindow();
+        m.addListener('click', () => { Object.values(markers).forEach(x=>x.iw.close()); iw.open(map,m); });
+        markers[d.id] = {m, iw};
       } else {
-        markers[d.id].setLatLng([d.lat, d.lng]);
-        markers[d.id].setIcon(driverIcon(status, d.name));
+        markers[d.id].m.setPosition({lat:d.lat, lng:d.lng});
+        markers[d.id].m.setIcon(driverIcon(status, d.name));
       }
+      markers[d.id].iw.setContent(popContent);
 
-      const popContent = `
-        <div style="font-family:monospace;font-size:12px;">
-          <b>🚚 ${d.name}</b><br>
-          ${d.status_label}<br>
-          ${d.delivery ? `📦 ${d.delivery.package_id}<br>📍 ${d.delivery.dest_name}<br>⏱ ETA: ${d.eta_str}` : 'No active delivery'}
-        </div>`;
-      markers[d.id].getPopup().setContent(popContent);
-
-      // Draw destination marker & line
+      // Destination + real Directions route
       if (d.delivery && d.delivery.status !== 'completed') {
-        const dlat = d.delivery.dest_lat;
-        const dlng = d.delivery.dest_lng;
-
+        const dlat = d.delivery.dest_lat, dlng = d.delivery.dest_lng;
         if (!destMarkers[d.id]) {
-          const destIcon = L.divIcon({
-            className: '',
-            html: `<div style="width:32px;height:32px;background:#ef4444;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #fff;box-shadow:0 0 10px #ef444488;">📦</div>`,
-            iconSize: [32, 32],
-            iconAnchor: [16, 16]
+          const dm = new google.maps.Marker({
+            position:{lat:dlat,lng:dlng}, map,
+            icon: {
+              url: svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="7" fill="#ef4444" stroke="white" stroke-width="2"/><text x="16" y="22" text-anchor="middle" font-size="16" font-family="Arial">&#x1F4E6;</text></svg>`),
+              scaledSize: new google.maps.Size(32,32), anchor: new google.maps.Point(16,16)
+            },
+            title: d.delivery.dest_name, zIndex: 8
           });
-          destMarkers[d.id] = {
-            marker: L.marker([dlat, dlng], {icon: destIcon}).addTo(map),
-            line: L.polyline([[STORE.lat, STORE.lng], [dlat, dlng], [STORE.lat, STORE.lng]], {
-              color: '#f59e0b', weight: 1.5, dashArray: '5,8', opacity: 0.5
-            }).addTo(map),
-            driverLine: L.polyline([[d.lat, d.lng], [dlat, dlng]], {
-              color: '#3b82f6', weight: 2, opacity: 0.8
-            }).addTo(map)
-          };
-          destMarkers[d.id].marker.bindPopup(`<b>📦 ${d.delivery.package_id}</b><br>${d.delivery.dest_name}`);
-        } else {
-          destMarkers[d.id].marker.setLatLng([dlat, dlng]);
-          if (d.delivery.status === 'en_route') {
-            destMarkers[d.id].driverLine.setLatLngs([[d.lat, d.lng], [dlat, dlng]]);
-          } else if (d.delivery.status === 'returning') {
-            destMarkers[d.id].driverLine.setLatLngs([[d.lat, d.lng], [STORE.lat, STORE.lng]]);
-          } else {
-            destMarkers[d.id].driverLine.setLatLngs([]);
-          }
+          const dInfo = new google.maps.InfoWindow({content:`<b>📦 ${d.delivery.package_id}</b><br>${d.delivery.dest_name}`});
+          dm.addListener('click', () => dInfo.open(map, dm));
+
+          const dr = new google.maps.DirectionsRenderer({
+            map, suppressMarkers:true,
+            polylineOptions:{strokeColor:'#3b82f6', strokeWeight:3, strokeOpacity:0.85}
+          });
+          new google.maps.DirectionsService().route({
+            origin: {lat:STORE.lat, lng:STORE.lng},
+            destination: {lat:dlat, lng:dlng},
+            travelMode: google.maps.TravelMode.DRIVING
+          }, (result, status) => { if (status === 'OK') dr.setDirections(result); });
+
+          destMarkers[d.id] = {dm, dInfo, dr};
         }
       } else {
-        // Clean up old markers
         if (destMarkers[d.id]) {
-          map.removeLayer(destMarkers[d.id].marker);
-          map.removeLayer(destMarkers[d.id].line);
-          map.removeLayer(destMarkers[d.id].driverLine);
+          destMarkers[d.id].dm.setMap(null);
+          destMarkers[d.id].dr.setMap(null);
           delete destMarkers[d.id];
         }
       }
     });
-  } catch (e) {
-    console.error('Update error:', e);
-  }
+  } catch(e) { console.error('Update error:', e); }
 }
 
 function focusDriver(id, lat, lng) {
   selectedDriverId = id;
-  map.setView([lat, lng], 13, {animate: true});
-  if (markers[id]) markers[id].openPopup();
+  map.panTo({lat, lng});
+  map.setZoom(13);
+  if (markers[id]) { Object.values(markers).forEach(x=>x.iw.close()); markers[id].iw.open(map, markers[id].m); }
 }
 
 // ── Assign Delivery ───────────────────────────────────────────────────────────
-function onDestSelect() {
-  const val = document.getElementById('sel-dest').value;
-  document.getElementById('custom-dest-fields').style.display = val === 'custom' ? 'block' : 'none';
-}
-
 async function assignDelivery() {
   const driverId = document.getElementById('sel-driver').value;
-  const destVal = document.getElementById('sel-dest').value;
   const pkgId = document.getElementById('pkg-id').value.trim();
 
   if (!driverId) { showToast('⚠ Select a driver'); return; }
-  if (!destVal) { showToast('⚠ Select a destination'); return; }
-
-  let destName, destLat, destLng;
-
-  if (destVal === 'custom') {
-    destName = document.getElementById('custom-name').value.trim();
-    destLat = parseFloat(document.getElementById('custom-lat').value);
-    destLng = parseFloat(document.getElementById('custom-lng').value);
-    if (!destName || isNaN(destLat) || isNaN(destLng)) {
-      showToast('⚠ Fill in custom destination fields');
-      return;
-    }
-  } else {
-    const parts = destVal.split(',');
-    destLat = parseFloat(parts[0]);
-    destLng = parseFloat(parts[1]);
-    destName = parts.slice(2).join(',');
-  }
+  if (!selectedDest) { showToast('⚠ Search and select a destination address'); return; }
 
   try {
     const res = await fetch('/api/assign', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ driver_id: parseInt(driverId), dest_name: destName,
-                             dest_lat: destLat, dest_lng: destLng, package_id: pkgId })
+      body: JSON.stringify({
+        driver_id: parseInt(driverId),
+        dest_name: selectedDest.name,
+        dest_lat: selectedDest.lat,
+        dest_lng: selectedDest.lng,
+        package_id: pkgId
+      })
     });
     const data = await res.json();
     if (data.success) {
       showToast(`✓ Dispatched! ETA: ${data.eta_to_dest_min} min (${data.distance_km} km)`);
       document.getElementById('pkg-id').value = '';
-    } else {
-      showToast('✗ ' + data.error);
-    }
-  } catch (e) {
-    showToast('✗ Network error');
-  }
+      document.getElementById('dest-autocomplete').value = '';
+      document.getElementById('dest-preview').style.display = 'none';
+      selectedDest = null;
+    } else { showToast('✗ ' + data.error); }
+  } catch(e) { showToast('✗ Network error'); }
 }
 
 // ── Register Driver ───────────────────────────────────────────────────────────
@@ -875,12 +868,17 @@ function showToast(msg) {
   setTimeout(() => el.classList.remove('show'), 4000);
 }
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-initMap();
-updateDrivers();
-setInterval(updateDrivers, 10000);  // update every 10 seconds
-setInterval(updateClock, 1000);
-updateClock();
+// ── Boot (called by GM loader) ────────────────────────────────────────────────
+function onGMLoaded() {
+  initMap();
+  updateDrivers();
+  setInterval(updateDrivers, 10000);
+  setInterval(updateClock, 1000);
+  updateClock();
+}
+</script>
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key={{ gmaps_key }}&libraries=places&callback=onGMLoaded">
 </script>
 </body>
 </html>

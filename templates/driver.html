@@ -6,8 +6,6 @@
 <title>DeliveryOS — Driver Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
   :root {
     --bg: #0a0c0f;
@@ -314,12 +312,9 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
-  .leaflet-tile { filter: brightness(0.85) saturate(0.7); }
-  .leaflet-control-zoom a {
-    background: var(--surface) !important;
-    color: var(--text) !important;
-    border-color: var(--border) !important;
-  }
+  /* Google Maps dark control theme */
+  .gm-style .gm-style-iw-c { background: var(--surface) !important; color: var(--text) !important; }
+  .gm-style .gm-style-iw-d { overflow: hidden !important; }
 </style>
 </head>
 <body>
@@ -411,41 +406,71 @@
 
 <script>
 const STORE = { lat: {{ store.lat }}, lng: {{ store.lng }}, name: "{{ store.name }}" };
-let map, driverMarker, destMarker, storeMarker, routeLine, driverLine;
+let map, driverMarker, destMarker, destInfo, storeMarker, dirRenderer;
 let lastStatus = null;
 
-function initMap() {
-  map = L.map('map', { center: [STORE.lat, STORE.lng], zoom: 11 });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
+const DARK_STYLES = [
+  {elementType:"geometry",stylers:[{color:"#0a0c0f"}]},
+  {elementType:"labels.text.fill",stylers:[{color:"#6b7280"}]},
+  {elementType:"labels.text.stroke",stylers:[{color:"#111418"}]},
+  {featureType:"administrative.country",elementType:"labels.text.fill",stylers:[{color:"#9ca3af"}]},
+  {featureType:"poi",elementType:"labels.text.fill",stylers:[{color:"#6b7280"}]},
+  {featureType:"poi.park",elementType:"geometry",stylers:[{color:"#111418"}]},
+  {featureType:"road",elementType:"geometry.fill",stylers:[{color:"#1e2429"}]},
+  {featureType:"road",elementType:"labels.text.fill",stylers:[{color:"#6b7280"}]},
+  {featureType:"road.highway",elementType:"geometry",stylers:[{color:"#252d38"}]},
+  {featureType:"water",elementType:"geometry",stylers:[{color:"#060810"}]},
+  {featureType:"water",elementType:"labels.text.fill",stylers:[{color:"#374151"}]}
+];
 
-  // Store marker
-  const storeIcon = L.divIcon({
-    className: '',
-    html: `<div style="width:40px;height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;border:3px solid #fff;box-shadow:0 4px 15px rgba(245,158,11,0.5);">🏭</div>`,
-    iconSize: [40,40], iconAnchor:[20,20]
-  });
-  storeMarker = L.marker([STORE.lat, STORE.lng], {icon: storeIcon}).addTo(map)
-    .bindPopup(`<b>${STORE.name}</b>`);
-
-  // Driver marker
-  const driverIcon = L.divIcon({
-    className: '',
-    html: `<div id="drvIcon" style="width:40px;height:40px;background:#3b82f6;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;border:3px solid #fff;box-shadow:0 0 15px #3b82f688;">🚚</div>`,
-    iconSize:[40,40], iconAnchor:[20,20]
-  });
-  driverMarker = L.marker([STORE.lat, STORE.lng], {icon: driverIcon}).addTo(map)
-    .bindPopup('<b>You are here</b>');
+function svgUrl(svg) {
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
-const statusIcons = {
-  en_route: '🚚',
-  at_destination: '📦',
-  returning: '↩️',
-  idle: '⏳',
-  completed: '✅'
-};
+function initMap() {
+  map = new google.maps.Map(document.getElementById('map'), {
+    center: {lat: STORE.lat, lng: STORE.lng},
+    zoom: 11,
+    styles: DARK_STYLES,
+    mapTypeControl: false,
+    streetViewControl: false
+  });
+
+  // Store marker
+  storeMarker = new google.maps.Marker({
+    position: {lat: STORE.lat, lng: STORE.lng},
+    map,
+    icon: {
+      url: svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="#f59e0b" stroke="white" stroke-width="3"/><text x="20" y="28" text-anchor="middle" font-size="22" font-family="Arial">&#x1F3ED;</text></svg>`),
+      scaledSize: new google.maps.Size(40,40),
+      anchor: new google.maps.Point(20,20)
+    },
+    title: STORE.name, zIndex: 5
+  });
+  const storeInfo = new google.maps.InfoWindow({content:`<b>${STORE.name}</b>`});
+  storeMarker.addListener('click', () => storeInfo.open(map, storeMarker));
+
+  // Driver marker
+  driverMarker = new google.maps.Marker({
+    position: {lat: STORE.lat, lng: STORE.lng},
+    map,
+    icon: {
+      url: svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="#3b82f6" stroke="white" stroke-width="3"/><text x="20" y="28" text-anchor="middle" font-size="22" font-family="Arial">&#x1F69A;</text></svg>`),
+      scaledSize: new google.maps.Size(40,40),
+      anchor: new google.maps.Point(20,20)
+    },
+    title: 'You', zIndex: 10
+  });
+  const driverInfo = new google.maps.InfoWindow({content:`<b>You are here</b>`});
+  driverMarker.addListener('click', () => driverInfo.open(map, driverMarker));
+
+  // DirectionsRenderer (for real road route)
+  dirRenderer = new google.maps.DirectionsRenderer({
+    map,
+    suppressMarkers: true,
+    polylineOptions: {strokeColor:'#3b82f6', strokeWeight:3, strokeOpacity:0.85}
+  });
+}
 
 const statusColors = {
   en_route: '#3b82f6',
@@ -455,11 +480,18 @@ const statusColors = {
   completed: '#6b7280'
 };
 
+const statusIcons = {
+  en_route: '🚚',
+  at_destination: '📦',
+  returning: '↩️',
+  idle: '⏳',
+  completed: '✅'
+};
+
 async function updateStatus() {
   try {
     const res = await fetch('/api/my_status');
     const data = await res.json();
-
     const status = data.status;
     const hasDelivery = data.delivery !== null;
 
@@ -474,17 +506,15 @@ async function updateStatus() {
     const pct = data.progress_pct || 0;
     document.getElementById('progressPct').textContent = `${pct}%`;
     document.getElementById('progressFill').style.width = `${pct}%`;
-    document.getElementById('destNameProgress').textContent =
-      hasDelivery ? data.delivery.dest_name : '—';
+    document.getElementById('destNameProgress').textContent = hasDelivery ? data.delivery.dest_name : '—';
 
     // ETAs
     document.getElementById('etaDest').textContent = data.eta_to_dest || '—';
     document.getElementById('etaStore').textContent = data.eta_to_store || '—';
 
-    // Package detail & idle toggle
+    // Package detail
     const pkgDetail = document.getElementById('pkgDetail');
     const idleMsg = document.getElementById('idleMsg');
-
     if (hasDelivery) {
       pkgDetail.style.display = 'block';
       idleMsg.style.display = 'none';
@@ -496,55 +526,52 @@ async function updateStatus() {
       idleMsg.style.display = 'block';
     }
 
-    // Map
-    driverMarker.setLatLng([data.lat, data.lng]);
+    // Update driver position on map
+    driverMarker.setPosition({lat: data.lat, lng: data.lng});
 
     if (hasDelivery) {
       const dlat = data.delivery.dest_lat;
       const dlng = data.delivery.dest_lng;
 
       if (!destMarker) {
-        const destIcon = L.divIcon({
-          className: '',
-          html: `<div style="width:36px;height:36px;background:#ef4444;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 0 12px #ef444488;">📦</div>`,
-          iconSize:[36,36], iconAnchor:[18,18]
+        // Destination marker
+        destMarker = new google.maps.Marker({
+          position: {lat:dlat, lng:dlng},
+          map,
+          icon: {
+            url: svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="7" fill="#ef4444" stroke="white" stroke-width="2"/><text x="16" y="22" text-anchor="middle" font-size="16" font-family="Arial">&#x1F4E6;</text></svg>`),
+            scaledSize: new google.maps.Size(32,32), anchor: new google.maps.Point(16,16)
+          },
+          title: data.delivery.dest_name, zIndex: 8
         });
-        destMarker = L.marker([dlat, dlng], {icon: destIcon}).addTo(map)
-          .bindPopup(`<b>📦 ${data.delivery.package_id}</b><br>${data.delivery.dest_name}`);
+        destInfo = new google.maps.InfoWindow({content:`<b>📦 ${data.delivery.package_id}</b><br>${data.delivery.dest_name}`});
+        destMarker.addListener('click', () => destInfo.open(map, destMarker));
 
-        routeLine = L.polyline([[STORE.lat, STORE.lng], [dlat, dlng], [STORE.lat, STORE.lng]], {
-          color: '#f59e0b', weight: 1.5, dashArray: '6,8', opacity: 0.4
-        }).addTo(map);
+        // Real road route: warehouse → destination
+        new google.maps.DirectionsService().route({
+          origin: {lat:STORE.lat, lng:STORE.lng},
+          destination: {lat:dlat, lng:dlng},
+          travelMode: google.maps.TravelMode.DRIVING
+        }, (result, routeStatus) => {
+          if (routeStatus === 'OK') dirRenderer.setDirections(result);
+        });
 
-        driverLine = L.polyline([[data.lat, data.lng], [dlat, dlng]], {
-          color: '#3b82f6', weight: 2.5, opacity: 0.9
-        }).addTo(map);
-
-        // Fit bounds
-        map.fitBounds([
-          [STORE.lat, STORE.lng],
-          [dlat, dlng],
-          [data.lat, data.lng]
-        ], {padding: [40, 40]});
-      } else {
-        destMarker.setLatLng([dlat, dlng]);
-        if (status === 'en_route') {
-          driverLine.setLatLngs([[data.lat, data.lng], [dlat, dlng]]);
-        } else if (status === 'returning') {
-          driverLine.setLatLngs([[data.lat, data.lng], [STORE.lat, STORE.lng]]);
-        } else {
-          driverLine.setLatLngs([]);
-        }
+        // Fit map to show store + dest + driver
+        const bounds = new google.maps.LatLngBounds();
+        bounds.extend({lat:STORE.lat, lng:STORE.lng});
+        bounds.extend({lat:dlat, lng:dlng});
+        bounds.extend({lat:data.lat, lng:data.lng});
+        map.fitBounds(bounds, {top:40, right:40, bottom:40, left:40});
       }
     } else {
       // Clean up
-      if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
-      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
-      if (driverLine) { map.removeLayer(driverLine); driverLine = null; }
+      if (destMarker) { destMarker.setMap(null); destMarker = null; }
+      if (destInfo) { destInfo.close(); destInfo = null; }
+      if (dirRenderer) dirRenderer.setMap(null);
     }
 
     lastStatus = status;
-  } catch (e) {
+  } catch(e) {
     console.error('Status update error:', e);
   }
 }
@@ -553,11 +580,17 @@ function updateClock() {
   document.getElementById('clock').textContent = new Date().toLocaleTimeString();
 }
 
-initMap();
-updateStatus();
-setInterval(updateStatus, 10000); // every 10 seconds
-setInterval(updateClock, 1000);
-updateClock();
+// ── Boot (called by GM loader) ────────────────────────────────────────────────
+function onGMLoaded() {
+  initMap();
+  updateStatus();
+  setInterval(updateStatus, 10000);
+  setInterval(updateClock, 1000);
+  updateClock();
+}
+</script>
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key={{ gmaps_key }}&libraries=places&callback=onGMLoaded">
 </script>
 </body>
 </html>

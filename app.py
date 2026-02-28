@@ -27,6 +27,8 @@ except OSError:
     # Fall back to /tmp if the configured directory is not writable
     DB = "/tmp/delivery.db"
 
+GOOGLE_MAPS_KEY = os.environ.get("GOOGLE_MAPS_KEY", "")
+
 STORE_LAT, STORE_LNG, STORE_NAME = 43.6532, -79.3832, "Main Warehouse"
 DRIVER_SPEED_KMH = 35
 
@@ -153,7 +155,8 @@ def manager_dashboard():
     return render_template("manager.html",
                            drivers=[dict(r) for r in drivers],
                            destinations=DEMO_DESTINATIONS,
-                           store={"lat": STORE_LAT, "lng": STORE_LNG, "name": STORE_NAME})
+                           store={"lat": STORE_LAT, "lng": STORE_LNG, "name": STORE_NAME},
+                           gmaps_key=GOOGLE_MAPS_KEY)
 
 @app.route("/driver")
 @login_required
@@ -166,7 +169,8 @@ def driver_dashboard():
         return "Driver profile not found.", 404
     return render_template("driver.html",
                            driver=dict(driver),
-                           store={"lat": STORE_LAT, "lng": STORE_LNG, "name": STORE_NAME})
+                           store={"lat": STORE_LAT, "lng": STORE_LNG, "name": STORE_NAME},
+                           gmaps_key=GOOGLE_MAPS_KEY)
 
 # ── Manager APIs ───────────────────────────────────────────────────────────────
 @app.route("/api/register_driver", methods=["POST"])
