@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
 <style>
   :root {
     --bg: #0a0c0f;
@@ -201,28 +202,28 @@
   /* STATS BAR */
   .stats-bar {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    padding: 12px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    padding: 10px 12px;
     border-bottom: 1px solid var(--border);
   }
 
   .stat-box {
     background: var(--surface2);
     border-radius: 8px;
-    padding: 10px;
+    padding: 8px 4px;
     text-align: center;
   }
 
   .stat-box .val {
     font-family: 'Space Mono', monospace;
-    font-size: 22px;
+    font-size: 18px;
     font-weight: 700;
     color: var(--accent);
   }
 
   .stat-box .lbl {
-    font-size: 10px;
+    font-size: 9px;
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -363,6 +364,22 @@
   .badge-returning { background: rgba(249,115,22,0.15); color: #fb923c; }
   .badge-completed { background: rgba(107,114,128,0.15); color: #9ca3af; }
   .badge-idle { background: rgba(107,114,128,0.15); color: #9ca3af; }
+  .badge-cancelled { background: rgba(239,68,68,0.15); color: #f87171; }
+
+  .btn-cancel {
+    margin-top: 8px;
+    width: 100%;
+    padding: 5px 0;
+    background: rgba(239,68,68,0.08);
+    border: 1px solid rgba(239,68,68,0.25);
+    border-radius: 6px;
+    color: #f87171;
+    font-size: 11px;
+    font-family: 'Space Mono', monospace;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-cancel:hover { background: rgba(239,68,68,0.18); }
 
   /* TOAST */
   .toast {
@@ -492,6 +509,14 @@
   <div class="badge">MANAGER</div>
   <div class="spacer"></div>
   <div class="clock" id="clock"></div>
+  <div style="display:inline-flex;align-items:center;gap:5px;">
+    <span style="color:var(--muted);font-size:11px;font-family:'Space Mono',monospace;">DONE</span>
+    <span id="completion-badge" data-count="0"
+          style="display:none;background:var(--green);color:#000;font-size:10px;font-weight:700;
+                 border-radius:10px;padding:1px 7px;font-family:'Space Mono',monospace;min-width:18px;text-align:center;">
+      0
+    </span>
+  </div>
   <a href="/logout">Logout</a>
 </div>
 
@@ -501,16 +526,20 @@
   <div class="sidebar">
     <div class="stats-bar">
       <div class="stat-box">
-        <div class="val" id="stat-total">0</div>
-        <div class="lbl">Drivers</div>
-      </div>
-      <div class="stat-box">
         <div class="val" id="stat-active">0</div>
         <div class="lbl">Active</div>
       </div>
       <div class="stat-box">
+        <div class="val" id="stat-idle">0</div>
+        <div class="lbl">Idle</div>
+      </div>
+      <div class="stat-box">
         <div class="val" id="stat-done">0</div>
         <div class="lbl">Today</div>
+      </div>
+      <div class="stat-box">
+        <div class="val" id="stat-avg">—</div>
+        <div class="lbl">Avg Min</div>
       </div>
     </div>
     <div class="sidebar-section">
@@ -548,8 +577,10 @@
         </div>
         <div class="form-group">
           <label>Destination</label>
-          <div class="search-wrap">
+          <div class="search-wrap" style="position:relative;">
             <input type="text" id="dest-search" placeholder="Search any address..." autocomplete="off" oninput="searchAddress()">
+            <span id="search-spinner" style="display:none;position:absolute;right:10px;top:50%;transform:translateY(-50%);
+                  font-family:'Space Mono',monospace;font-size:11px;color:var(--muted);">…</span>
             <div class="sr-list" id="search-results" style="display:none;"></div>
           </div>
           <div class="dest-preview" id="dest-preview">📍 <span id="dest-preview-text"></span></div>
@@ -558,7 +589,7 @@
           <label>Package ID</label>
           <input type="text" id="pkg-id" placeholder="Auto-generated if empty">
         </div>
-        <button class="btn btn-primary" onclick="assignDelivery()">▶ DISPATCH</button>
+        <button class="btn btn-primary" id="btn-dispatch" onclick="assignDelivery()">▶ DISPATCH</button>
       </div>
     </div>
 
@@ -591,7 +622,7 @@
             <option>Bicycle</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="registerDriver()">+ REGISTER DRIVER</button>
+        <button class="btn btn-primary" id="btn-register" onclick="registerDriver()">+ REGISTER DRIVER</button>
       </div>
     </div>
 
@@ -600,6 +631,21 @@
       <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
         <span>RECENT DELIVERIES</span>
         <span onclick="loadHistory()" style="cursor:pointer;color:var(--accent);">↻</span>
+      </div>
+      <div style="padding:8px 10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;">
+        <input type="text" id="hist-driver" placeholder="Filter by driver…"
+               style="background:var(--bg);border:1px solid var(--border);border-radius:6px;
+                      padding:6px 9px;color:var(--text);font-size:12px;width:100%;outline:none;font-family:'DM Sans',sans-serif;">
+        <select id="hist-status"
+                style="background:var(--bg);border:1px solid var(--border);border-radius:6px;
+                       padding:6px 9px;color:var(--text);font-size:12px;width:100%;outline:none;font-family:'DM Sans',sans-serif;">
+          <option value="">All statuses</option>
+          <option value="en_route">En Route</option>
+          <option value="at_destination">At Destination</option>
+          <option value="returning">Returning</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
       </div>
       <div class="history-list" id="historyList">
         <div style="color:var(--muted);font-size:13px;padding:8px;">Click ↻ to load history</div>
@@ -616,6 +662,10 @@ const STORE = { lat: {{ store.lat }}, lng: {{ store.lng }}, name: "{{ store.name
 let map, markers = {}, storeMarker, destMarkers = {};
 let selectedDriverId = null;
 let selectedDest = null;
+let socket = null;
+let pollingInterval = null;
+let activeDeliveryIds = new Set();
+let _firstFleetUpdate = true;
 
 // ── Init Map (Leaflet + OpenStreetMap) ────────────────────────────────────────
 function initMap() {
@@ -650,16 +700,18 @@ async function searchAddress() {
   const resultsEl = document.getElementById('search-results');
   if (q.length < 3) { resultsEl.style.display = 'none'; return; }
   clearTimeout(nominatimTimeout);
+  document.getElementById('search-spinner').style.display = 'block';
   nominatimTimeout = setTimeout(async () => {
     try {
       const r = await fetch(
         `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6`,
         { headers: {'Accept-Language': 'en'} }
       );
+      document.getElementById('search-spinner').style.display = 'none';
       const items = await r.json();
       resultsEl.innerHTML = '';
       if (!items.length) {
-        resultsEl.innerHTML = '<div class="sr-item sr-empty">No results</div>';
+        resultsEl.innerHTML = '<div class="sr-item sr-empty">No results found</div>';
       } else {
         items.forEach(item => {
           const div = document.createElement('div');
@@ -670,7 +722,11 @@ async function searchAddress() {
         });
       }
       resultsEl.style.display = 'block';
-    } catch(e) { console.error('Nominatim error', e); }
+    } catch(e) {
+      document.getElementById('search-spinner').style.display = 'none';
+      resultsEl.innerHTML = '<div class="sr-item sr-empty">Search unavailable — check connection</div>';
+      resultsEl.style.display = 'block';
+    }
   }, 400);
 }
 
@@ -693,103 +749,146 @@ document.addEventListener('click', e => {
     document.getElementById('search-results').style.display = 'none';
 });
 
-// ── Fetch & update ────────────────────────────────────────────────────────────
-const DARK_STYLES_UNUSED = [
-// nothing
-];
+// ── Render fleet (called by both WebSocket and polling fallback) ───────────────
+function renderFleet(data) {
+  const drivers = data.drivers;
+  const kpis = data.kpis || {};
 
-let totalCompleted = 0;
+  // KPI stats bar
+  document.getElementById('stat-active').textContent = kpis.active ?? 0;
+  document.getElementById('stat-idle').textContent   = kpis.idle   ?? 0;
+  document.getElementById('stat-done').textContent   = kpis.today  ?? 0;
+  document.getElementById('stat-avg').textContent    = kpis.avg_min != null ? kpis.avg_min : '—';
 
-async function updateDrivers() {
+  // Completion detection (skip on first call to avoid false alerts on load)
+  const currentlyActive = new Set(
+    drivers
+      .filter(d => d.delivery && !['completed','cancelled'].includes(d.delivery.status))
+      .map(d => d.delivery.id)
+  );
+  if (!_firstFleetUpdate) {
+    activeDeliveryIds.forEach(id => {
+      if (!currentlyActive.has(id)) {
+        const drv = drivers.find(d => d.delivery && d.delivery.id === id);
+        if (drv) showCompletionAlert(drv.name, drv.delivery.dest_name);
+      }
+    });
+  }
+  _firstFleetUpdate = false;
+  activeDeliveryIds = currentlyActive;
+
+  // Driver cards
+  const cardsEl = document.getElementById('driverCards');
+  cardsEl.innerHTML = '';
+
+  drivers.forEach(d => {
+    const status = d.delivery ? d.delivery.status : 'idle';
+    const card = document.createElement('div');
+    card.className = `driver-card ${status} ${d.id === selectedDriverId ? 'selected' : ''}`;
+
+    const gmapsHref = d.delivery && !['completed','cancelled'].includes(d.delivery.status)
+      ? `https://www.google.com/maps/dir/?api=1&destination=${d.delivery.dest_lat},${d.delivery.dest_lng}`
+      : null;
+
+    const canCancel = d.delivery && !['completed','cancelled'].includes(d.delivery.status);
+    const safeName = d.name.replace(/'/g, "\\'");
+    const cancelBtn = canCancel
+      ? `<button class="btn-cancel" onclick="event.stopPropagation();cancelDelivery(${d.delivery.id},'${safeName}')">✕ Cancel Delivery</button>`
+      : '';
+
+    card.innerHTML = `
+      <div class="d-name">🚚 ${d.name}</div>
+      <div class="d-vehicle">${d.vehicle} · @${d.username}</div>
+      <div class="d-status">
+        <span class="status-dot dot-${status}"></span>
+        ${d.status_label || 'Idle'}
+      </div>
+      ${d.delivery ? `<div class="d-eta">ETA: ${d.eta_str || '—'}</div>` : ''}
+      ${gmapsHref ? `<a class="gmaps-link" href="${gmapsHref}" target="_blank" rel="noopener" onclick="event.stopPropagation()">🗺 Open in Google Maps</a>` : ''}
+      ${cancelBtn}
+    `;
+    card.onclick = () => focusDriver(d.id, d.lat, d.lng);
+    cardsEl.appendChild(card);
+
+    // Map marker
+    if (!markers[d.id]) {
+      markers[d.id] = L.marker([d.lat, d.lng], {icon: driverIcon(status, d.name)}).addTo(map);
+      markers[d.id].bindPopup('');
+    } else {
+      markers[d.id].setLatLng([d.lat, d.lng]);
+      markers[d.id].setIcon(driverIcon(status, d.name));
+    }
+    const popContent = `<div style="font-family:monospace;font-size:12px;">
+      <b>🚚 ${d.name}</b><br>${d.status_label}
+      ${d.delivery ? `<br>📦 ${d.delivery.package_id}<br>📍 ${d.delivery.dest_name}<br>⏱ ETA: ${d.eta_str}` : '<br>No active delivery'}
+    </div>`;
+    markers[d.id].getPopup().setContent(popContent);
+
+    // Destination marker + dashed route lines
+    if (d.delivery && !['completed','cancelled'].includes(d.delivery.status)) {
+      const dlat = d.delivery.dest_lat, dlng = d.delivery.dest_lng;
+      if (!destMarkers[d.id]) {
+        const destIcon = L.divIcon({
+          className: '',
+          html: `<div style="width:32px;height:32px;background:#ef4444;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #fff;box-shadow:0 0 10px #ef444488;">📦</div>`,
+          iconSize:[32,32], iconAnchor:[16,16]
+        });
+        destMarkers[d.id] = {
+          marker: L.marker([dlat, dlng], {icon: destIcon}).addTo(map)
+            .bindPopup(`<b>📦 ${d.delivery.package_id}</b><br>${d.delivery.dest_name}`),
+          line: L.polyline([[STORE.lat, STORE.lng], [dlat, dlng], [STORE.lat, STORE.lng]], {
+            color:'#f59e0b', weight:1.5, dashArray:'5,8', opacity:0.5
+          }).addTo(map),
+          driverLine: L.polyline([[d.lat, d.lng], [dlat, dlng]], {
+            color:'#3b82f6', weight:2, opacity:0.8
+          }).addTo(map)
+        };
+      } else {
+        destMarkers[d.id].marker.setLatLng([dlat, dlng]);
+        if (d.delivery.status === 'en_route')
+          destMarkers[d.id].driverLine.setLatLngs([[d.lat, d.lng], [dlat, dlng]]);
+        else if (d.delivery.status === 'returning')
+          destMarkers[d.id].driverLine.setLatLngs([[d.lat, d.lng], [STORE.lat, STORE.lng]]);
+        else
+          destMarkers[d.id].driverLine.setLatLngs([]);
+      }
+    } else {
+      if (destMarkers[d.id]) {
+        map.removeLayer(destMarkers[d.id].marker);
+        map.removeLayer(destMarkers[d.id].line);
+        map.removeLayer(destMarkers[d.id].driverLine);
+        delete destMarkers[d.id];
+      }
+    }
+  });
+}
+
+// ── Polling fallback ──────────────────────────────────────────────────────────
+async function updateDriversPoll() {
   try {
     const res = await fetch('/api/drivers/live');
     const data = await res.json();
-    const drivers = data.drivers;
+    renderFleet(data);
+  } catch(e) { console.error('Poll error:', e); }
+}
 
-    const active = drivers.filter(d => d.delivery && d.delivery.status !== 'completed').length;
-    document.getElementById('stat-total').textContent = drivers.length;
-    document.getElementById('stat-active').textContent = active;
+// ── WebSocket connection ──────────────────────────────────────────────────────
+function connectSocket() {
+  socket = io({ transports: ['websocket', 'polling'] });
 
-    let newCompleted = 0;
-    drivers.forEach(d => { if (d.delivery && d.delivery.status === 'completed') newCompleted++; });
-    totalCompleted = Math.max(totalCompleted, newCompleted);
-    document.getElementById('stat-done').textContent = totalCompleted;
+  socket.on('connect', () => {
+    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
+  });
 
-    const cardsEl = document.getElementById('driverCards');
-    cardsEl.innerHTML = '';
+  socket.on('fleet_update', renderFleet);
 
-    drivers.forEach(d => {
-      const status = d.delivery ? d.delivery.status : 'idle';
-      const card = document.createElement('div');
-      card.className = `driver-card ${status} ${d.id === selectedDriverId ? 'selected' : ''}`;
-      const gmapsHref = d.delivery && d.delivery.status !== 'completed'
-        ? `https://www.google.com/maps/dir/?api=1&destination=${d.delivery.dest_lat},${d.delivery.dest_lng}`
-        : null;
-      card.innerHTML = `
-        <div class="d-name">🚚 ${d.name}</div>
-        <div class="d-vehicle">${d.vehicle} · @${d.username}</div>
-        <div class="d-status">
-          <span class="status-dot dot-${status}"></span>
-          ${d.status_label || 'Idle'}
-        </div>
-        ${d.delivery ? `<div class="d-eta">ETA: ${d.eta_str || '—'}</div>` : ''}
-        ${gmapsHref ? `<a class="gmaps-link" href="${gmapsHref}" target="_blank" rel="noopener" onclick="event.stopPropagation()">🗺 Open in Google Maps</a>` : ''}
-      `;
-      card.onclick = () => focusDriver(d.id, d.lat, d.lng);
-      cardsEl.appendChild(card);
+  socket.on('disconnect', () => {
+    if (!pollingInterval) pollingInterval = setInterval(updateDriversPoll, 10000);
+  });
 
-      // Map marker (Leaflet)
-      if (!markers[d.id]) {
-        markers[d.id] = L.marker([d.lat, d.lng], {icon: driverIcon(status, d.name)}).addTo(map);
-        markers[d.id].bindPopup('');
-      } else {
-        markers[d.id].setLatLng([d.lat, d.lng]);
-        markers[d.id].setIcon(driverIcon(status, d.name));
-      }
-      const popContent = `<div style="font-family:monospace;font-size:12px;">
-        <b>🚚 ${d.name}</b><br>${d.status_label}
-        ${d.delivery ? `<br>📦 ${d.delivery.package_id}<br>📍 ${d.delivery.dest_name}<br>⏱ ETA: ${d.eta_str}` : '<br>No active delivery'}
-      </div>`;
-      markers[d.id].getPopup().setContent(popContent);
-
-      // Destination marker + dashed lines
-      if (d.delivery && d.delivery.status !== 'completed') {
-        const dlat = d.delivery.dest_lat, dlng = d.delivery.dest_lng;
-        if (!destMarkers[d.id]) {
-          const destIcon = L.divIcon({
-            className: '',
-            html: `<div style="width:32px;height:32px;background:#ef4444;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #fff;box-shadow:0 0 10px #ef444488;">📦</div>`,
-            iconSize:[32,32], iconAnchor:[16,16]
-          });
-          destMarkers[d.id] = {
-            marker: L.marker([dlat, dlng], {icon: destIcon}).addTo(map)
-              .bindPopup(`<b>📦 ${d.delivery.package_id}</b><br>${d.delivery.dest_name}`),
-            line: L.polyline([[STORE.lat, STORE.lng], [dlat, dlng], [STORE.lat, STORE.lng]], {
-              color:'#f59e0b', weight:1.5, dashArray:'5,8', opacity:0.5
-            }).addTo(map),
-            driverLine: L.polyline([[d.lat, d.lng], [dlat, dlng]], {
-              color:'#3b82f6', weight:2, opacity:0.8
-            }).addTo(map)
-          };
-        } else {
-          destMarkers[d.id].marker.setLatLng([dlat, dlng]);
-          if (d.delivery.status === 'en_route')
-            destMarkers[d.id].driverLine.setLatLngs([[d.lat, d.lng], [dlat, dlng]]);
-          else if (d.delivery.status === 'returning')
-            destMarkers[d.id].driverLine.setLatLngs([[d.lat, d.lng], [STORE.lat, STORE.lng]]);
-          else
-            destMarkers[d.id].driverLine.setLatLngs([]);
-        }
-      } else {
-        if (destMarkers[d.id]) {
-          map.removeLayer(destMarkers[d.id].marker);
-          map.removeLayer(destMarkers[d.id].line);
-          map.removeLayer(destMarkers[d.id].driverLine);
-          delete destMarkers[d.id];
-        }
-      }
-    });
-  } catch(e) { console.error('Update error:', e); }
+  socket.on('connect_error', () => {
+    if (!pollingInterval) pollingInterval = setInterval(updateDriversPoll, 10000);
+  });
 }
 
 function focusDriver(id, lat, lng) {
@@ -798,12 +897,43 @@ function focusDriver(id, lat, lng) {
   if (markers[id]) markers[id].openPopup();
 }
 
+// ── Cancel Delivery ───────────────────────────────────────────────────────────
+async function cancelDelivery(deliveryId, driverName) {
+  if (!confirm(`Cancel active delivery for ${driverName}?`)) return;
+  try {
+    const res = await fetch('/api/cancel_delivery', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ delivery_id: deliveryId })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`✓ Delivery cancelled for ${driverName}`);
+      updateDriversPoll();
+    } else {
+      showToast('✗ ' + data.error);
+    }
+  } catch(e) { showToast('✗ Network error'); }
+}
+
+// ── Completion Alert ──────────────────────────────────────────────────────────
+function showCompletionAlert(driverName, destName) {
+  showToast(`✅ ${driverName} completed delivery to ${destName}`, 'success');
+  const badge = document.getElementById('completion-badge');
+  const count = parseInt(badge.dataset.count || '0') + 1;
+  badge.dataset.count = count;
+  badge.textContent = count;
+  badge.style.display = 'inline-block';
+}
+
 // ── Assign Delivery ───────────────────────────────────────────────────────────
 async function assignDelivery() {
   const driverId = document.getElementById('sel-driver').value;
   const pkgId = document.getElementById('pkg-id').value.trim();
   if (!driverId) { showToast('⚠ Select a driver'); return; }
   if (!selectedDest) { showToast('⚠ Search and select a destination'); return; }
+  const btn = document.getElementById('btn-dispatch');
+  btn.disabled = true; btn.textContent = 'Dispatching…';
   try {
     const res = await fetch('/api/assign', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -812,16 +942,34 @@ async function assignDelivery() {
     });
     const data = await res.json();
     if (data.success) {
-      showToast(`✓ Dispatched! ETA: ${data.eta_to_dest_min} min (${data.distance_km} km)`);
+      showToast(`✓ Dispatched! ETA: ${data.eta_to_dest_min} min · ${data.distance_km} km`);
       document.getElementById('pkg-id').value = '';
       document.getElementById('dest-search').value = '';
       document.getElementById('dest-preview').style.display = 'none';
       selectedDest = null;
     } else { showToast('✗ ' + data.error); }
   } catch(e) { showToast('✗ Network error'); }
+  finally { btn.disabled = false; btn.textContent = '▶ DISPATCH'; }
 }
 
 // ── Register Driver ───────────────────────────────────────────────────────────
+async function refreshDriverDropdown() {
+  try {
+    const res  = await fetch('/api/drivers');
+    const data = await res.json();
+    const sel  = document.getElementById('sel-driver');
+    const curr = sel.value;
+    sel.innerHTML = '<option value="">Select driver...</option>';
+    data.drivers.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = `${d.name} (${d.vehicle})`;
+      sel.appendChild(opt);
+    });
+    if (curr) sel.value = curr;
+  } catch(e) { console.error('Dropdown refresh failed', e); }
+}
+
 async function registerDriver() {
   const payload = {
     name:     document.getElementById('reg-name').value.trim(),
@@ -830,12 +978,12 @@ async function registerDriver() {
     phone:    document.getElementById('reg-phone').value.trim(),
     vehicle:  document.getElementById('reg-vehicle').value,
   };
-
   if (!payload.name || !payload.username || !payload.password) {
     showToast('⚠ Name, username, and password are required');
     return;
   }
-
+  const btn = document.getElementById('btn-register');
+  btn.disabled = true; btn.textContent = 'Registering…';
   try {
     const res = await fetch('/api/register_driver', {
       method: 'POST',
@@ -844,15 +992,15 @@ async function registerDriver() {
     });
     const data = await res.json();
     if (data.success) {
-      showToast('✓ Driver registered! Reload to see in assign list.');
+      showToast(`✓ ${payload.name} registered and ready to assign.`);
       ['reg-name','reg-user','reg-pass','reg-phone'].forEach(id =>
         document.getElementById(id).value = '');
+      await refreshDriverDropdown();
     } else {
       showToast('✗ ' + data.error);
     }
-  } catch (e) {
-    showToast('✗ Network error');
-  }
+  } catch (e) { showToast('✗ Network error'); }
+  finally { btn.disabled = false; btn.textContent = '+ REGISTER DRIVER'; }
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
@@ -860,22 +1008,34 @@ async function loadHistory() {
   const el = document.getElementById('historyList');
   el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px;">Loading...</div>';
   try {
-    const res = await fetch('/api/history');
+    const driverQ = document.getElementById('hist-driver').value.trim();
+    const statusQ = document.getElementById('hist-status').value;
+    const params  = new URLSearchParams();
+    if (driverQ) params.set('driver', driverQ);
+    if (statusQ) params.set('status', statusQ);
+    const url = '/api/history' + (params.toString() ? '?' + params.toString() : '');
+    const res = await fetch(url);
     const data = await res.json();
     el.innerHTML = '';
     if (!data.history.length) {
-      el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px;">No deliveries yet</div>';
+      el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px;">No deliveries found</div>';
       return;
     }
     data.history.forEach(h => {
       const d = new Date(h.assigned_at * 1000);
       const timeStr = d.toLocaleTimeString();
+      const canCancel = ['en_route','at_destination','returning'].includes(h.status);
+      const safeName = (h.driver_name || '').replace(/'/g, "\\'");
+      const cancelHtml = canCancel
+        ? `<button class="btn-cancel" style="margin-top:6px;" onclick="cancelDelivery(${h.id},'${safeName}')">✕ Cancel</button>`
+        : '';
       el.innerHTML += `
         <div class="history-item">
           <div class="pkg">📦 ${h.package_id}</div>
           <div class="dest">${h.dest_name}</div>
           <div class="meta">${h.driver_name} · ${timeStr}</div>
           <div style="margin-top:4px;"><span class="status-badge badge-${h.status}">${h.status}</span></div>
+          ${cancelHtml}
         </div>`;
     });
   } catch (e) {
@@ -895,22 +1055,27 @@ document.querySelectorAll('.tab').forEach(tab => {
   });
 });
 
+document.getElementById('hist-driver').addEventListener('input',  () => loadHistory());
+document.getElementById('hist-status').addEventListener('change', () => loadHistory());
+
 // ── Clock ─────────────────────────────────────────────────────────────────────
 function updateClock() {
   document.getElementById('clock').textContent = new Date().toLocaleTimeString();
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
-function showToast(msg) {
+function showToast(msg, type = 'default') {
   const el = document.getElementById('toast');
   el.textContent = msg;
+  el.style.borderColor = type === 'success' ? 'var(--green)' : 'var(--accent)';
   el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 4000);
+  setTimeout(() => el.classList.remove('show'), 5000);
 }
 
+// ── Init ──────────────────────────────────────────────────────────────────────
 initMap();
-updateDrivers();
-setInterval(updateDrivers, 10000);
+connectSocket();
+updateDriversPoll();
 setInterval(updateClock, 1000);
 updateClock();
 </script>

@@ -179,37 +179,65 @@
     margin-bottom: 20px;
   }
 
-  .hint-cards {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
+  .demo-banner {
     margin-top: 24px;
-  }
-
-  .hint-card {
-    background: rgba(245,158,11,0.05);
-    border: 1px solid rgba(245,158,11,0.1);
+    border: 1px solid rgba(245,158,11,0.15);
     border-radius: 10px;
-    padding: 12px 14px;
-    text-align: center;
+    overflow: hidden;
   }
 
-  .hint-card .role {
+  .demo-banner-header {
+    background: rgba(245,158,11,0.06);
+    border-bottom: 1px solid rgba(245,158,11,0.1);
+    padding: 8px 14px;
     font-family: 'Space Mono', monospace;
-    font-size: 10px;
+    font-size: 9px;
     color: var(--accent);
-    letter-spacing: 1px;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
-    margin-bottom: 6px;
   }
 
-  .hint-card .creds {
+  .demo-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 9px 14px;
     font-size: 12px;
-    color: var(--muted);
+    border-bottom: 1px solid rgba(30,36,41,0.6);
   }
 
-  .hint-card .creds strong { color: var(--text); }
+  .demo-row:last-child { border-bottom: none; }
+
+  .demo-role {
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .demo-creds {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--text);
+    cursor: pointer;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    transition: border-color 0.2s;
+  }
+
+  .demo-creds:hover { border-color: var(--accent); color: var(--accent); }
+
+  .demo-creds span { color: var(--muted); }
 </style>
+<script>
+function fillCreds(u, p) {
+  document.querySelector('input[name="username"]').value = u;
+  document.querySelector('input[name="password"]').value = p;
+  document.querySelector('input[name="username"]').focus();
+}
+</script>
 </head>
 <body>
 <div class="login-wrap">
@@ -236,14 +264,15 @@
       <button type="submit" class="btn-login">ACCESS SYSTEM →</button>
     </form>
 
-    <div class="hint-cards">
-      <div class="hint-card">
-        <div class="role">🏢 Manager</div>
-        <div class="creds"><strong>manager</strong> / manager</div>
+    <div class="demo-banner">
+      <div class="demo-banner-header">Demo Credentials</div>
+      <div class="demo-row">
+        <span class="demo-role">🏢 Manager</span>
+        <span class="demo-creds" onclick="fillCreds('manager','manager')" title="Click to fill">manager <span>/ manager</span></span>
       </div>
-      <div class="hint-card">
-        <div class="role">🚚 Driver</div>
-        <div class="creds"><strong>driver</strong> / driver</div>
+      <div class="demo-row">
+        <span class="demo-role">🚚 Driver</span>
+        <span class="demo-creds" onclick="fillCreds('driver','driver')" title="Click to fill">driver <span>/ driver</span></span>
       </div>
     </div>
   </div>

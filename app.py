@@ -1,18 +1,22 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_socketio import SocketIO
 import sqlite3, os, math, time
 from datetime import datetime, timedelta
 from functools import wraps
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-app.secret_key = "delivery-os-fixed-secret-key-2024"
+app.secret_key = os.environ.get("SECRET_KEY", "delivery-os-dev-fallback-change-me")
 
 # HuggingFace Spaces sets SPACE_ID; use it to detect HTTPS production environment.
 # SameSite=None+Secure is required so session cookies survive the HF iframe context.
 _on_hf = bool(os.environ.get("SPACE_ID"))
 app.config["SESSION_COOKIE_SAMESITE"] = "None" if _on_hf else "Lax"
 app.config["SESSION_COOKIE_SECURE"]   = _on_hf   # True on HF (HTTPS), False locally
+
+socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*", logger=False, engineio_logger=False)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _default_db = os.path.join(BASE_DIR, "data", "delivery.db")
@@ -29,8 +33,10 @@ except OSError:
 
 GOOGLE_MAPS_KEY = os.environ.get("GOOGLE_MAPS_KEY", "")
 
-STORE_LAT, STORE_LNG, STORE_NAME = 43.6532, -79.3832, "Main Warehouse"
-DRIVER_SPEED_KMH = 35
+STORE_LAT   = float(os.environ.get("STORE_LAT",  "43.6532"))
+STORE_LNG   = float(os.environ.get("STORE_LNG",  "-79.3832"))
+STORE_NAME  = os.environ.get("STORE_NAME", "Main Warehouse")
+DRIVER_SPEED_KMH = float(os.environ.get("DRIVER_SPEED_KMH", "35"))
 
 DEMO_DESTINATIONS = [
     {"name": "Pearson Airport",         "lat": 43.6777, "lng": -79.6248},
@@ -45,7 +51,7 @@ DEMO_DESTINATIONS = [
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def get_db():
-    conn = sqlite3.connect(DB)
+    conn = sqlite3.connect(DB, timeout=5)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -61,6 +67,12 @@ def interpolate(lat1, lng1, lat2, lng2, frac):
 
 def eta_minutes(km):
     return round((km / DRIVER_SPEED_KMH) * 60, 1)
+
+def generate_package_id(db):
+    today     = datetime.now().strftime('%y%m%d')
+    today_ts  = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    count     = db.execute("SELECT COUNT(*) FROM deliveries WHERE assigned_at >= ?", (today_ts,)).fetchone()[0]
+    return f"PKG-{today}-{count+1:04d}"
 
 def login_required(f):
     @wraps(f)
@@ -101,8 +113,17 @@ def init_db():
                          CHECK(status IN ('en_route','at_destination','returning','completed','cancelled'))
         );
         """)
-        db.execute("INSERT OR IGNORE INTO users (username,password,role) VALUES ('manager','manager','manager')")
-        db.execute("INSERT OR IGNORE INTO users (username,password,role) VALUES ('driver','driver','driver')")
+        db.execute("INSERT OR IGNORE INTO users (username,password,role) VALUES ('manager',?,'manager')",
+                   (generate_password_hash('manager'),))
+        db.execute("INSERT OR IGNORE INTO users (username,password,role) VALUES ('driver',?,'driver')",
+                   (generate_password_hash('driver'),))
+        db.commit()
+        # One-time migration: hash any remaining plaintext passwords
+        for row in db.execute("SELECT id, password FROM users").fetchall():
+            pw = row['password']
+            if not pw.startswith('pbkdf2:') and not pw.startswith('scrypt:'):
+                db.execute("UPDATE users SET password=? WHERE id=?",
+                           (generate_password_hash(pw), row['id']))
         db.commit()
         drv_user = db.execute("SELECT id FROM users WHERE username='driver'").fetchone()
         if drv_user:
@@ -126,8 +147,8 @@ def login():
         u = request.form.get("username","").strip()
         p = request.form.get("password","").strip()
         with get_db() as db:
-            user = db.execute("SELECT * FROM users WHERE username=? AND password=?", (u,p)).fetchone()
-        if user:
+            user = db.execute("SELECT * FROM users WHERE username=?", (u,)).fetchone()
+        if user and check_password_hash(user["password"], p):
             session.permanent = True
             session["user_id"]  = user["id"]
             session["username"] = user["username"]
@@ -184,7 +205,8 @@ def register_driver():
         return jsonify({"error": "username, password, name are required"}), 400
     try:
         with get_db() as db:
-            db.execute("INSERT INTO users (username,password,role) VALUES (?,?,'driver')", (u, p))
+            db.execute("INSERT INTO users (username,password,role) VALUES (?,?,'driver')",
+                       (u, generate_password_hash(p)))
             uid = db.execute("SELECT id FROM users WHERE username=?", (u,)).fetchone()["id"]
             db.execute("INSERT INTO drivers (user_id,name,phone,vehicle) VALUES (?,?,?,?)",
                        (uid, name, data.get("phone","").strip(), data.get("vehicle","Van").strip()))
@@ -203,10 +225,10 @@ def assign_delivery():
     dest_name = data.get("dest_name","").strip()
     dest_lat  = float(data.get("dest_lat", 0))
     dest_lng  = float(data.get("dest_lng", 0))
-    pkg_id    = data.get("package_id", f"PKG-{int(time.time())}")
     if not driver_id or not dest_name:
         return jsonify({"error": "driver_id and dest_name required"}), 400
     with get_db() as db:
+        pkg_id = data.get("package_id","").strip() or generate_package_id(db)
         db.execute("UPDATE deliveries SET status='cancelled' WHERE driver_id=? AND status IN ('en_route','at_destination','returning')", (driver_id,))
         db.execute("INSERT INTO deliveries (driver_id,package_id,dest_name,dest_lat,dest_lng,assigned_at,status) VALUES (?,?,?,?,?,?,'en_route')",
                    (driver_id, pkg_id, dest_name, dest_lat, dest_lng, time.time()))
@@ -216,18 +238,94 @@ def assign_delivery():
     return jsonify({"success": True, "message": f"Assigned {pkg_id} to driver {driver_id}",
                     "eta_to_dest_min": eta_minutes(dist_km), "distance_km": round(dist_km, 2)})
 
+@app.route("/api/cancel_delivery", methods=["POST"])
+@login_required
+def cancel_delivery():
+    if session["role"] != "manager":
+        return jsonify({"error": "Unauthorized"}), 403
+    data = request.json
+    delivery_id = data.get("delivery_id")
+    if not delivery_id:
+        return jsonify({"error": "delivery_id required"}), 400
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id, driver_id, status FROM deliveries WHERE id=?", (delivery_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Delivery not found"}), 404
+        if row["status"] not in ("en_route", "at_destination", "returning"):
+            return jsonify({"error": f"Cannot cancel delivery with status '{row['status']}'"}), 409
+        db.execute("UPDATE deliveries SET status='cancelled', completed_at=? WHERE id=?",
+                   (time.time(), delivery_id))
+        db.execute("UPDATE drivers SET status='idle' WHERE id=?", (row["driver_id"],))
+        db.commit()
+    return jsonify({"success": True, "message": f"Delivery {delivery_id} cancelled."})
+
 @app.route("/api/history")
 @login_required
 def delivery_history():
     if session["role"] != "manager":
         return jsonify({"error": "Unauthorized"}), 403
+    driver_filter = request.args.get("driver", "").strip()
+    status_filter = request.args.get("status", "").strip()
+    query = """
+        SELECT dl.*, d.name as driver_name
+        FROM deliveries dl JOIN drivers d ON dl.driver_id=d.id
+        WHERE 1=1
+    """
+    params = []
+    if driver_filter:
+        query += " AND LOWER(d.name) LIKE ?"
+        params.append(f"%{driver_filter.lower()}%")
+    if status_filter:
+        query += " AND dl.status = ?"
+        params.append(status_filter)
+    query += " ORDER BY dl.assigned_at DESC LIMIT 100"
+    with get_db() as db:
+        rows = db.execute(query, params).fetchall()
+    return jsonify({"history": [dict(r) for r in rows]})
+
+@app.route("/api/drivers")
+@login_required
+def list_drivers():
+    if session["role"] != "manager":
+        return jsonify({"error": "Unauthorized"}), 403
     with get_db() as db:
         rows = db.execute("""
-            SELECT dl.*, d.name as driver_name
-            FROM deliveries dl JOIN drivers d ON dl.driver_id=d.id
-            ORDER BY dl.assigned_at DESC LIMIT 50
+            SELECT d.id, d.name, d.vehicle, d.status, u.username
+            FROM drivers d JOIN users u ON d.user_id=u.id
+            ORDER BY d.name
         """).fetchall()
-    return jsonify({"history": [dict(r) for r in rows]})
+    return jsonify({"drivers": [dict(r) for r in rows]})
+
+@app.route("/api/driver/history")
+@login_required
+def driver_delivery_history():
+    if session["role"] != "driver":
+        return jsonify({"error": "Unauthorized"}), 403
+    with get_db() as db:
+        drv = db.execute("SELECT id FROM drivers WHERE user_id=?", (session["user_id"],)).fetchone()
+        if not drv:
+            return jsonify({"error": "Driver not found"}), 404
+        rows = db.execute("""
+            SELECT id, package_id, dest_name, dest_lat, dest_lng,
+                   assigned_at, completed_at, status
+            FROM deliveries WHERE driver_id=?
+            ORDER BY assigned_at DESC LIMIT 20
+        """, (drv["id"],)).fetchall()
+        today_ts = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        total  = db.execute("SELECT COUNT(*) FROM deliveries WHERE driver_id=? AND status='completed'",
+                            (drv["id"],)).fetchone()[0]
+        today  = db.execute(
+            "SELECT COUNT(*) FROM deliveries WHERE driver_id=? AND status='completed' AND completed_at >= ?",
+            (drv["id"], today_ts)
+        ).fetchone()[0]
+    history = []
+    for r in rows:
+        row = dict(r)
+        row["dist_km"] = round(haversine_km(STORE_LAT, STORE_LNG, row["dest_lat"], row["dest_lng"]), 2)
+        history.append(row)
+    return jsonify({"history": history, "stats": {"total": total, "today": today}})
 
 # ── Simulation helper ──────────────────────────────────────────────────────────
 def compute_position(delivery, now):
@@ -269,6 +367,77 @@ def compute_position(delivery, now):
                 eta_str=eta_str, label=label, progress=progress,
                 dist_km=round(dist,2), travel_s=travel_s, dwell_s=dwell_s)
 
+# ── Fleet payload builder ──────────────────────────────────────────────────────
+def _build_fleet_payload(db, now):
+    """Build fleet status payload (used by REST endpoint and WebSocket broadcast)."""
+    drivers = db.execute("""
+        SELECT d.id, d.name, d.vehicle, d.status, u.username
+        FROM drivers d JOIN users u ON d.user_id=u.id
+    """).fetchall()
+    results = []
+    for drv in drivers:
+        drv = dict(drv)
+        delivery = db.execute("""
+            SELECT * FROM deliveries
+            WHERE driver_id=? AND status IN ('en_route','at_destination','returning')
+            ORDER BY assigned_at DESC LIMIT 1
+        """, (drv["id"],)).fetchone()
+
+        if not delivery:
+            drv.update({"lat": STORE_LAT, "lng": STORE_LNG, "delivery": None,
+                         "status_label": "Idle at Warehouse", "eta_str": None})
+            results.append(drv)
+            continue
+
+        delivery = dict(delivery)
+        pos = compute_position(delivery, now)
+
+        if pos["phase"] != delivery["status"]:
+            if pos["phase"] == "completed":
+                db.execute("UPDATE deliveries SET status='completed', completed_at=? WHERE id=?",
+                           (now, delivery["id"]))
+                db.execute("UPDATE drivers SET status='idle' WHERE id=?", (drv["id"],))
+            else:
+                db.execute("UPDATE deliveries SET status=? WHERE id=?",
+                           (pos["phase"], delivery["id"]))
+            db.commit()
+
+        drv["lat"]          = pos["lat"]
+        drv["lng"]          = pos["lng"]
+        drv["status_label"] = pos["label"]
+        drv["eta_str"]      = pos["eta_str"]
+        drv["delivery"]     = {
+            "id": delivery["id"], "package_id": delivery["package_id"],
+            "dest_name": delivery["dest_name"],
+            "dest_lat": delivery["dest_lat"], "dest_lng": delivery["dest_lng"],
+            "status": pos["phase"], "assigned_at": delivery["assigned_at"],
+            "dist_km": pos["dist_km"],
+        }
+        results.append(drv)
+
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    today_count = db.execute(
+        "SELECT COUNT(*) FROM deliveries WHERE status='completed' AND completed_at >= ?",
+        (today_start,)
+    ).fetchone()[0]
+    avg_row = db.execute(
+        "SELECT AVG(completed_at - assigned_at) / 60.0 FROM deliveries WHERE status='completed' AND completed_at >= ?",
+        (today_start,)
+    ).fetchone()[0]
+    avg_minutes = round(avg_row, 1) if avg_row else None
+
+    return {
+        "store": {"lat": STORE_LAT, "lng": STORE_LNG, "name": STORE_NAME},
+        "drivers": results,
+        "timestamp": now,
+        "kpis": {
+            "active": sum(1 for d in results if d.get("delivery")),
+            "idle":   sum(1 for d in results if not d.get("delivery")),
+            "today":  today_count,
+            "avg_min": avg_minutes,
+        }
+    }
+
 # ── Live fleet (manager) ───────────────────────────────────────────────────────
 @app.route("/api/drivers/live")
 @login_required
@@ -276,52 +445,32 @@ def drivers_live():
     if session["role"] != "manager":
         return jsonify({"error": "Unauthorized"}), 403
     now = time.time()
-    results = []
     with get_db() as db:
-        drivers = db.execute("""
-            SELECT d.id, d.name, d.vehicle, d.status, u.username
-            FROM drivers d JOIN users u ON d.user_id=u.id
-        """).fetchall()
-        for drv in drivers:
-            drv = dict(drv)
-            delivery = db.execute("""
-                SELECT * FROM deliveries
-                WHERE driver_id=? AND status IN ('en_route','at_destination','returning')
-                ORDER BY assigned_at DESC LIMIT 1
-            """, (drv["id"],)).fetchone()
+        payload = _build_fleet_payload(db, now)
+    return jsonify(payload)
 
-            if not delivery:
-                drv.update({"lat": STORE_LAT, "lng": STORE_LNG, "delivery": None,
-                             "status_label": "Idle at Warehouse", "eta_str": None})
-                results.append(drv)
-                continue
+# ── WebSocket: fleet broadcast ─────────────────────────────────────────────────
+_broadcast_thread = None
 
-            delivery = dict(delivery)
-            pos = compute_position(delivery, now)
+@socketio.on('connect')
+def on_connect():
+    if session.get('role') != 'manager':
+        return False
+    global _broadcast_thread
+    if _broadcast_thread is None:
+        _broadcast_thread = socketio.start_background_task(fleet_broadcast_task)
 
-            if pos["phase"] != delivery["status"]:
-                if pos["phase"] == "completed":
-                    db.execute("UPDATE deliveries SET status='completed', completed_at=? WHERE id=?", (now, delivery["id"]))
-                    db.execute("UPDATE drivers SET status='idle' WHERE id=?", (drv["id"],))
-                else:
-                    db.execute("UPDATE deliveries SET status=? WHERE id=?", (pos["phase"], delivery["id"]))
-                db.commit()
-
-            drv["lat"]          = pos["lat"]
-            drv["lng"]          = pos["lng"]
-            drv["status_label"] = pos["label"]
-            drv["eta_str"]      = pos["eta_str"]
-            drv["delivery"]     = {
-                "id": delivery["id"], "package_id": delivery["package_id"],
-                "dest_name": delivery["dest_name"],
-                "dest_lat": delivery["dest_lat"], "dest_lng": delivery["dest_lng"],
-                "status": pos["phase"], "assigned_at": delivery["assigned_at"],
-                "dist_km": pos["dist_km"],
-            }
-            results.append(drv)
-
-    return jsonify({"store": {"lat": STORE_LAT, "lng": STORE_LNG, "name": STORE_NAME},
-                    "drivers": results, "timestamp": now})
+def fleet_broadcast_task():
+    """Push fleet updates to all connected manager clients every 4 seconds."""
+    while True:
+        socketio.sleep(4)
+        try:
+            now = time.time()
+            with get_db() as db:
+                payload = _build_fleet_payload(db, now)
+            socketio.emit('fleet_update', payload)
+        except Exception:
+            pass
 
 # ── Driver own status ──────────────────────────────────────────────────────────
 @app.route("/api/my_status")
@@ -389,4 +538,4 @@ def my_status():
     })
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=7860, debug=False)
+    socketio.run(app, host="0.0.0.0", port=7860, debug=False)
