@@ -8,7 +8,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
 <style>
   :root {
     --bg: #0a0c0f;
@@ -662,8 +661,6 @@ const STORE = { lat: {{ store.lat }}, lng: {{ store.lng }}, name: "{{ store.name
 let map, markers = {}, storeMarker, destMarkers = {};
 let selectedDriverId = null;
 let selectedDest = null;
-let socket = null;
-let pollingInterval = null;
 let activeDeliveryIds = new Set();
 let _firstFleetUpdate = true;
 
@@ -704,7 +701,7 @@ async function searchAddress() {
   nominatimTimeout = setTimeout(async () => {
     try {
       const r = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6`,
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&viewbox=-81.9,43.4,-80.6,42.5&bounded=1`,
         { headers: {'Accept-Language': 'en'} }
       );
       document.getElementById('search-spinner').style.display = 'none';
@@ -863,8 +860,8 @@ function renderFleet(data) {
   });
 }
 
-// ── Polling fallback ──────────────────────────────────────────────────────────
-async function updateDriversPoll() {
+// ── Fleet polling ─────────────────────────────────────────────────────────────
+async function updateDrivers() {
   try {
     const res = await fetch('/api/drivers/live');
     const data = await res.json();
@@ -872,24 +869,6 @@ async function updateDriversPoll() {
   } catch(e) { console.error('Poll error:', e); }
 }
 
-// ── WebSocket connection ──────────────────────────────────────────────────────
-function connectSocket() {
-  socket = io({ transports: ['websocket', 'polling'] });
-
-  socket.on('connect', () => {
-    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
-  });
-
-  socket.on('fleet_update', renderFleet);
-
-  socket.on('disconnect', () => {
-    if (!pollingInterval) pollingInterval = setInterval(updateDriversPoll, 10000);
-  });
-
-  socket.on('connect_error', () => {
-    if (!pollingInterval) pollingInterval = setInterval(updateDriversPoll, 10000);
-  });
-}
 
 function focusDriver(id, lat, lng) {
   selectedDriverId = id;
@@ -909,7 +888,7 @@ async function cancelDelivery(deliveryId, driverName) {
     const data = await res.json();
     if (data.success) {
       showToast(`✓ Delivery cancelled for ${driverName}`);
-      updateDriversPoll();
+      updateDrivers();
     } else {
       showToast('✗ ' + data.error);
     }
@@ -1074,8 +1053,8 @@ function showToast(msg, type = 'default') {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 initMap();
-connectSocket();
-updateDriversPoll();
+updateDrivers();
+setInterval(updateDrivers, 5000);
 setInterval(updateClock, 1000);
 updateClock();
 </script>

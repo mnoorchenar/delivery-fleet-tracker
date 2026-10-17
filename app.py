@@ -1,7 +1,6 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_socketio import SocketIO
 import sqlite3, os, math, time
 from datetime import datetime, timedelta
 from functools import wraps
@@ -15,8 +14,6 @@ app.secret_key = os.environ.get("SECRET_KEY", "delivery-os-dev-fallback-change-m
 _on_hf = bool(os.environ.get("SPACE_ID"))
 app.config["SESSION_COOKIE_SAMESITE"] = "None" if _on_hf else "Lax"
 app.config["SESSION_COOKIE_SECURE"]   = _on_hf   # True on HF (HTTPS), False locally
-
-socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*", logger=False, engineio_logger=False)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _default_db = os.path.join(BASE_DIR, "data", "delivery.db")
@@ -33,20 +30,20 @@ except OSError:
 
 GOOGLE_MAPS_KEY = os.environ.get("GOOGLE_MAPS_KEY", "")
 
-STORE_LAT   = float(os.environ.get("STORE_LAT",  "43.6532"))
-STORE_LNG   = float(os.environ.get("STORE_LNG",  "-79.3832"))
+STORE_LAT   = float(os.environ.get("STORE_LAT",  "42.9849"))
+STORE_LNG   = float(os.environ.get("STORE_LNG",  "-81.2453"))
 STORE_NAME  = os.environ.get("STORE_NAME", "Main Warehouse")
 DRIVER_SPEED_KMH = float(os.environ.get("DRIVER_SPEED_KMH", "35"))
 
 DEMO_DESTINATIONS = [
-    {"name": "Pearson Airport",         "lat": 43.6777, "lng": -79.6248},
-    {"name": "Scarborough Town Centre", "lat": 43.7764, "lng": -79.2318},
-    {"name": "Etobicoke Civic Centre",  "lat": 43.6465, "lng": -79.5565},
-    {"name": "North York Centre",       "lat": 43.7615, "lng": -79.4111},
-    {"name": "Mississauga City Hall",   "lat": 43.5890, "lng": -79.6441},
-    {"name": "Markham Civic Centre",    "lat": 43.8601, "lng": -79.3370},
-    {"name": "Brampton Gateway",        "lat": 43.6855, "lng": -79.7598},
-    {"name": "Ajax GO Station",         "lat": 43.8510, "lng": -79.0255},
+    {"name": "Masonville Mall",         "lat": 43.0266, "lng": -81.2761},
+    {"name": "White Oaks Mall",         "lat": 42.9401, "lng": -81.2273},
+    {"name": "London Airport",          "lat": 43.0358, "lng": -81.1528},
+    {"name": "Western University",      "lat": 43.0096, "lng": -81.2737},
+    {"name": "Fanshawe College",        "lat": 43.0135, "lng": -81.1985},
+    {"name": "St. Thomas",              "lat": 42.7766, "lng": -81.1984},
+    {"name": "Woodstock",               "lat": 43.1307, "lng": -80.7470},
+    {"name": "Strathroy",               "lat": 42.9577, "lng": -81.6165},
 ]
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -449,29 +446,6 @@ def drivers_live():
         payload = _build_fleet_payload(db, now)
     return jsonify(payload)
 
-# ── WebSocket: fleet broadcast ─────────────────────────────────────────────────
-_broadcast_thread = None
-
-@socketio.on('connect')
-def on_connect():
-    if session.get('role') != 'manager':
-        return False
-    global _broadcast_thread
-    if _broadcast_thread is None:
-        _broadcast_thread = socketio.start_background_task(fleet_broadcast_task)
-
-def fleet_broadcast_task():
-    """Push fleet updates to all connected manager clients every 4 seconds."""
-    while True:
-        socketio.sleep(4)
-        try:
-            now = time.time()
-            with get_db() as db:
-                payload = _build_fleet_payload(db, now)
-            socketio.emit('fleet_update', payload)
-        except Exception:
-            pass
-
 # ── Driver own status ──────────────────────────────────────────────────────────
 @app.route("/api/my_status")
 @login_required
@@ -538,4 +512,4 @@ def my_status():
     })
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=7860, debug=False)
+    app.run(host="0.0.0.0", port=7860, debug=False)
