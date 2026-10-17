@@ -16,8 +16,12 @@ sdk: docker
 [![Flask](https://img.shields.io/badge/Flask-3.0-4f46e5?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![Leaflet](https://img.shields.io/badge/Leaflet-1.9-22c55e?style=for-the-badge&logo=leaflet&logoColor=white)](https://leafletjs.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-3b82f6?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
-[![HuggingFace](https://img.shields.io/badge/HuggingFace-Spaces-ffcc00?style=for-the-badge&logo=huggingface&logoColor=black)](https://huggingface.co/mnoorchenar/spaces)
 [![Status](https://img.shields.io/badge/Status-Active-22c55e?style=for-the-badge)](#)
+
+<br/>
+
+[![Live Demo](https://img.shields.io/badge/%E2%96%B6_Live_Demo-Hugging_Face_Space-ffcc00?style=for-the-badge&logo=huggingface&logoColor=black)](https://huggingface.co/spaces/mnoorchenar/delivery-fleet-tracker)
+[![Source Code](https://img.shields.io/badge/Source_Code-GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/mnoorchenar/delivery-fleet-tracker)
 
 <br/>
 
@@ -34,16 +38,16 @@ sdk: docker
 - [Features](#-features)
 - [Architecture](#️-architecture)
 - [Getting Started](#-getting-started)
-- [Configuration](#-configuration)
 - [Docker Deployment](#-docker-deployment)
+- [Configuration](#️-configuration)
 - [Dashboard Modules](#-dashboard-modules)
 - [Simulation Logic](#-simulation-logic)
 - [API Reference](#-api-reference)
-- [Project Structure](#-project-structure)
 - [Default Credentials](#-default-credentials)
+- [Project Structure](#-project-structure)
 - [Author](#-author)
 - [Contributing](#-contributing)
-- [Disclaimer](#disclaimer)
+- [Disclaimer](#️-disclaimer)
 - [License](#-license)
 
 ---
@@ -172,6 +176,22 @@ Open `http://localhost:7860` in your browser.
 
 ---
 
+## 🐳 Docker Deployment
+
+```bash
+# Build and run
+docker build -t delivery-fleet-tracker .
+docker run -p 7860:7860 \
+  -e SECRET_KEY="your-secret" \
+  -e STORE_NAME="My Warehouse" \
+  -v $(pwd)/data:/app/data \
+  delivery-fleet-tracker
+```
+
+For **Hugging Face Spaces**, set `SECRET_KEY` (and any other vars) in your Space's **Settings → Repository secrets** panel. The app detects the `SPACE_ID` environment variable automatically and configures cookies for the HF iframe environment.
+
+---
+
 ## ⚙️ Configuration
 
 All configuration is done via environment variables. No config files to edit.
@@ -195,22 +215,6 @@ export STORE_NAME="London Depot"
 export SECRET_KEY="change-me-in-production"
 python app.py
 ```
-
----
-
-## 🐳 Docker Deployment
-
-```bash
-# Build and run
-docker build -t delivery-fleet-tracker .
-docker run -p 7860:7860 \
-  -e SECRET_KEY="your-secret" \
-  -e STORE_NAME="My Warehouse" \
-  -v $(pwd)/data:/app/data \
-  delivery-fleet-tracker
-```
-
-For **Hugging Face Spaces**, set `SECRET_KEY` (and any other vars) in your Space's **Settings → Repository secrets** panel. The app detects the `SPACE_ID` environment variable automatically and configures cookies for the HF iframe environment.
 
 ---
 
@@ -293,28 +297,6 @@ All endpoints require a valid session cookie. Manager-only endpoints return `403
 
 ---
 
-## 📁 Project Structure
-
-```
-delivery-fleet-tracker/
-│
-├── app.py                    # Flask app — routes, simulation engine
-│
-├── templates/
-│   ├── login.html            # Authentication page with click-to-fill demo credentials
-│   ├── manager.html          # Manager fleet dashboard (map · KPIs · dispatch · history)
-│   └── driver.html           # Driver dashboard (map · ETA · progress · history)
-│
-├── data/                     # SQLite database (auto-created, gitignored)
-│   └── delivery.db
-│
-├── requirements.txt          # Flask, gunicorn (pure Python — fast Docker build)
-├── Dockerfile                # Single worker, port 7860, HF Spaces ready
-└── README.md
-```
-
----
-
 ## 🔐 Default Credentials
 
 | Role | Username | Password |
@@ -327,6 +309,22 @@ Passwords are stored as **scrypt hashes** — existing plaintext passwords in ol
 The manager can register additional drivers via the **Register** tab. No database tools or restarts required.
 
 > **Production reminder:** Set a strong `SECRET_KEY` environment variable before deploying publicly.
+
+---
+
+## 📁 Project Structure
+
+```
+delivery-fleet-tracker/
+│
+├── 📂 templates/                 # HTML templates
+│   ├── driver.html
+│   ├── login.html
+│   └── manager.html
+├── 📄 Dockerfile                 # Container definition (port 7860)
+├── 📄 app.py                     # Application entry point
+└── 📄 requirements.txt           # Python dependencies
+```
 
 ---
 
@@ -350,7 +348,7 @@ The manager can register additional drivers via the **Register** tab. No databas
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/mnoorchenar)&nbsp;
 [![Personal Site](https://img.shields.io/badge/Website-mnoorchenar.github.io-4f46e5?style=for-the-badge&logo=githubpages&logoColor=white)](https://mnoorchenar.github.io/)&nbsp;
-[![HuggingFace](https://img.shields.io/badge/HuggingFace-ffcc00?style=for-the-badge&logo=huggingface&logoColor=black)](https://huggingface.co/mnoorchenar/spaces)&nbsp;
+[![HuggingFace](https://img.shields.io/badge/HuggingFace-ffcc00?style=for-the-badge&logo=huggingface&logoColor=black)](https://huggingface.co/mnoorchenar)&nbsp;
 [![Google Scholar](https://img.shields.io/badge/Scholar-4285F4?style=for-the-badge&logo=googlescholar&logoColor=white)](https://scholar.google.ca/citations?user=nn_Toq0AAAAJ&hl=en)&nbsp;
 [![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/mnoorchenar)
 
@@ -374,15 +372,16 @@ Contributions are welcome! Please follow these steps:
 
 ---
 
-## Disclaimer
+## ⚠️ Disclaimer
 
-This project is developed strictly for educational and research purposes and does not constitute professional advice of any kind. All data is either synthetically generated or publicly available — no real user data is stored or transmitted. This software is provided "as is" without warranty of any kind; use at your own risk.
+> [!WARNING]
+> This project is developed strictly for educational and research purposes and does not constitute professional advice of any kind. All data is either synthetically generated or publicly available — no real user data is stored or transmitted. This software is provided "as is" without warranty of any kind; use at your own risk.
 
 ---
 
 ## 📜 License
 
-Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for more information.
+Distributed under the **MIT License**.
 
 ---
 
@@ -390,9 +389,9 @@ Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for more informa
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:f59e0b,100:3b82f6&height=120&section=footer&text=Made%20with%20%E2%9D%A4%EF%B8%8F%20by%20Mohammad%20Noorchenarboo&fontColor=ffffff&fontSize=18&fontAlignY=80" width="100%"/>
 
-[![GitHub Stars](https://img.shields.io/github/stars/mnoorchenar/delivery-fleet-tracker?style=social)](https://github.com/mnoorchenar/delivery-fleet-tracker)
+[![GitHub Stars](https://img.shields.io/github/stars/mnoorchenar/delivery-fleet-tracker?style=social)](https://github.com/mnoorchenar/delivery-fleet-tracker/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/mnoorchenar/delivery-fleet-tracker?style=social)](https://github.com/mnoorchenar/delivery-fleet-tracker/fork)
 
-<sub>The name "DeliveryOS" is used purely for academic and research purposes. Any similarity to existing company names, products, or trademarks is entirely coincidental and unintentional. This project has no affiliation with any commercial entity.</sub>
+<sub>The name "DeliveryOS — Fleet Tracking System" is used purely for academic and research purposes. Any similarity to existing product names or trademarks is entirely coincidental. This project has no affiliation with any commercial entity.</sub>
 
 </div>
